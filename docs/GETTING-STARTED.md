@@ -330,6 +330,31 @@ data deletion first, because a vault will not delete while it protects anything.
 
 ## 8. When something goes wrong
 
+**Every run is logged.** The wizard and each deploy script write three files under `logs/`:
+
+| File | What it holds |
+|---|---|
+| `<run>.log` | One timestamped line per event, with a level: DEBUG, INFO, STEP, WARN, ERROR |
+| `<run>.jsonl` | The same events as JSON, one per line, with the account, machine and tool versions - for telemetry |
+| `<run>.transcript.txt` | Everything the console showed, so a crash is recorded even if it happened outside our code |
+
+The wizard prints the log path when it starts. After a failure, the line to look for is the
+`[ERROR]` entry - it carries the message, the script line that threw, and the stack.
+
+Choose how much to capture with `-LogLevel`:
+
+```powershell
+.\start.ps1                     # Verbose (default): az adds --verbose, kept in the file only
+.\start.ps1 -LogLevel Debug     # full Azure CLI HTTP traces, also echoed to the console
+.\start.ps1 -LogLevel Quiet     # console shows warnings and errors only
+```
+
+The log always receives everything regardless of level; the level only decides what the
+console shows and how chatty the Azure CLI is asked to be. Secrets passed on the command
+line are masked before they reach the log.
+
+**The errors you are most likely to see:**
+
 | What you see | What it means | What to do |
 |---|---|---|
 | `RequestDisallowedByAzure ... without authenticating through MFA` | The session signed in without MFA. Reads work, writes do not. | `az logout`, then `az login` and complete MFA |

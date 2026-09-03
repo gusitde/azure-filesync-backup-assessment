@@ -63,6 +63,9 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'AfsConfig.ps1')
+. (Join-Path $PSScriptRoot 'AfsLog.ps1')
+if (-not $env:AFS_LOG_FILE) { Start-AfsLog -Level Verbose -Name 'deploy' | Out-Null }
+Write-Host ('  log: ' + $env:AFS_LOG_FILE) -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------- helpers ----
 
@@ -73,47 +76,20 @@ $script:StepNo = 0
 function Write-Step {
     param([string]$Text)
     $script:StepNo++
+    Write-AfsLog -Level STEP -Message ('[' + $script:StepNo + '] ' + $Text)
     Write-Host ''
     Write-Host ("[{0}] {1}" -f $script:StepNo, $Text) -ForegroundColor Cyan
 }
 
-function Write-Ok   { param([string]$T) Write-Host ("      OK    " + $T) -ForegroundColor Green }
+function Write-Ok   { param([string]$T) Write-AfsLog -Level INFO -Message ("ok: " + $T); Write-Host ("      OK    " + $T) -ForegroundColor Green }
 function Write-Info { param([string]$T) Write-Host ("      ..    " + $T) -ForegroundColor DarkGray }
-function Write-Warn2 { param([string]$T) Write-Host ("      WARN  " + $T) -ForegroundColor Yellow }
+function Write-Warn2 { param([string]$T) Write-AfsLog -Level WARN -Message $T; Write-Host ("      WARN  " + $T) -ForegroundColor Yellow }
 
 function Invoke-Az {
-    <#  Run an az command. Returns parsed JSON when there is output, $null otherwise.
-        Throws with the full stderr when az fails, so a failure is never silent. #>
-    param(
-        [Parameter(Mandatory)][string[]]$Args,
-        [switch]$AllowFailure
-    )
-    # az writes progress and errors to stderr. With ErrorActionPreference='Stop' the
-    # 2>&1 merge turns that into a terminating NativeCommandError even when the call is
-    # an expected "does it exist?" probe, so the preference is relaxed for the call and
-    # the real outcome is taken from the exit code.
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $out = & az @Args 2>&1
-        $code = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $prevEap
-    }
-    if ($code -ne 0) {
-        if ($AllowFailure) { return $null }
-        $detail = ($out | Out-String).Trim()
-        # explain it here, where the raw Azure text is still available
-        if (Get-Command Show-AzureFailure -ErrorAction SilentlyContinue) {
-            Show-AzureFailure -Message $detail -Context ("Failed: az " + ($Args -join ' '))
-        }
-        throw ("az " + ($Args -join ' ') + "`n" + $detail)
-    }
-    # drop any ErrorRecord objects that the stderr merge produced on a successful call
-    $out = @($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
-    $text = ($out | Out-String).Trim()
-    if (-not $text) { return $null }
-    try { return $text | ConvertFrom-Json } catch { return $text }
+    # every CLI call goes through the shared logger so the run is fully recorded
+    param([Parameter(Mandatory)][string[]]$Args, [switch]$AllowFailure)
+    if ($AllowFailure) { return Invoke-AfsAz -Args $Args -AllowFailure }
+    return Invoke-AfsAz -Args $Args
 }
 
 

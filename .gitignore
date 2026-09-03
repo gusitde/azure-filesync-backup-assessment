@@ -11,3 +11,6 @@ deploy/parameters.*.jsonc
 # the operator answers - hold account names, domain and OU details
 deploy/inputs.json
 !deploy/inputs.sample.jsonc
+
+# run logs and telemetry written by start.ps1 and the deploy scripts
+logs/

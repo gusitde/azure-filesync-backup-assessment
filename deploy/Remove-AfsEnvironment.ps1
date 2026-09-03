@@ -37,29 +37,19 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'AfsConfig.ps1')
+. (Join-Path $PSScriptRoot 'AfsLog.ps1')
+if (-not $env:AFS_LOG_FILE) { Start-AfsLog -Level Verbose -Name 'remove' | Out-Null }
+Write-Host ('  log: ' + $env:AFS_LOG_FILE) -ForegroundColor DarkGray
 
-function Write-Step { param([string]$T) Write-Host ''; Write-Host ("-> " + $T) -ForegroundColor Cyan }
-function Write-Ok   { param([string]$T) Write-Host ("   OK   " + $T) -ForegroundColor Green }
-function Write-Warn2 { param([string]$T) Write-Host ("   WARN " + $T) -ForegroundColor Yellow }
+function Write-Step { param([string]$T) Write-AfsLog -Level STEP -Message $T; Write-Host ''; Write-Host ("-> " + $T) -ForegroundColor Cyan }
+function Write-Ok   { param([string]$T) Write-AfsLog -Level INFO -Message ("ok: " + $T); Write-Host ("   OK   " + $T) -ForegroundColor Green }
+function Write-Warn2 { param([string]$T) Write-AfsLog -Level WARN -Message $T; Write-Host ("   WARN " + $T) -ForegroundColor Yellow }
 
 function Invoke-Az {
+    # every CLI call goes through the shared logger so the run is fully recorded
     param([Parameter(Mandatory)][string[]]$Args, [switch]$AllowFailure)
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $out = & az @Args 2>&1
-        $code = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $prevEap
-    }
-    if ($code -ne 0) {
-        if ($AllowFailure) { return $null }
-        throw ("az " + ($Args -join ' ') + "`n" + (($out | Out-String).Trim()))
-    }
-    $out = @($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
-    $text = ($out | Out-String).Trim()
-    if (-not $text) { return $null }
-    try { return $text | ConvertFrom-Json } catch { return $text }
+    if ($AllowFailure) { return Invoke-AfsAz -Args $Args -AllowFailure }
+    return Invoke-AfsAz -Args $Args
 }
 
 function ConvertTo-Array {

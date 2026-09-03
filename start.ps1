@@ -17,7 +17,11 @@
   Windows paths, which corrupts Azure resource IDs.
 #>
 [CmdletBinding()]
-param()
+param(
+    # How much to record and how chatty the Azure CLI should be. Everything always goes to the
+    # log file; this chooses what the console also shows. See deploy/AfsLog.ps1.
+    [ValidateSet('Quiet', 'Normal', 'Verbose', 'Debug')][string]$LogLevel = 'Verbose'
+)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -27,6 +31,10 @@ $script:DeployDir = Join-Path $script:Root 'deploy'
 $script:InputsFile = Join-Path $script:DeployDir 'inputs.json'
 $script:ContextFile = Join-Path $script:DeployDir 'deployment-context.json'
 $script:RepoUrl    = 'https://github.com/gusitde/azure-filesync-backup-assessment'
+
+. (Join-Path $script:DeployDir 'AfsLog.ps1')
+. (Join-Path $script:DeployDir 'AfsConfig.ps1')
+$script:LogFile = Start-AfsLog -Level $LogLevel -Name 'wizard'
 
 # ------------------------------------------------------------------ ui ------
 
@@ -43,7 +51,7 @@ function Write-Banner {
 
 function Write-Title {
     param([string]$Text)
-    Write-Host ''
+    Write-AfsLog -Level STEP -Message $Text; Write-Host ''
     Write-Host ("  " + $Text) -ForegroundColor Cyan
     Write-Rule
 }
@@ -53,9 +61,9 @@ function Write-Explain {
     foreach ($line in ($Text -split "`n")) { Write-Host ("  " + $line) -ForegroundColor DarkGray }
 }
 
-function Write-Good { param([string]$T) Write-Host ("  [ok]   " + $T) -ForegroundColor Green }
-function Write-Bad  { param([string]$T) Write-Host ("  [!]    " + $T) -ForegroundColor Red }
-function Write-Note { param([string]$T) Write-Host ("  [i]    " + $T) -ForegroundColor Yellow }
+function Write-Good { param([string]$T) Write-AfsLog -Level INFO -Message ("ok: " + $T); Write-Host ("  [ok]   " + $T) -ForegroundColor Green }
+function Write-Bad  { param([string]$T) Write-AfsLog -Level ERROR -Message $T; Write-Host ("  [!]    " + $T) -ForegroundColor Red }
+function Write-Note { param([string]$T) Write-AfsLog -Level WARN -Message $T; Write-Host ("  [i]    " + $T) -ForegroundColor Yellow }
 
 function Read-Answer {
     <# Ask one question. Loops until the answer validates, so a typo never lands in a file. #>
@@ -86,6 +94,7 @@ function Read-Answer {
             if ($PatternHelp) { Write-Bad $PatternHelp } else { Write-Bad 'that does not look right.' }
             continue
         }
+        Write-AfsLog -Level DEBUG -Message ("answer: " + $Question + " -> " + $answer)
         return $answer
     }
 }
@@ -122,23 +131,18 @@ function Read-Choice {
         Write-Host ''
         Write-Host '  > ' -NoNewline -ForegroundColor White
         $a = Read-Host
-        if ($a -match '^\d+$' -and [int]$a -ge 1 -and [int]$a -le $Options.Count) { return ([int]$a - 1) }
+        if ($a -match '^\d+$' -and [int]$a -ge 1 -and [int]$a -le $Options.Count) {
+            Write-AfsLog -Level DEBUG -Message ("choice: " + $Question + " -> " + $Options[[int]$a - 1])
+            return ([int]$a - 1)
+        }
         Write-Bad ("choose 1 to " + $Options.Count)
     }
 }
 
 function Invoke-Cli {
     param([Parameter(Mandatory)][string[]]$Args, [switch]$AllowFailure)
-    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try { $out = & az @Args 2>&1; $code = $LASTEXITCODE } finally { $ErrorActionPreference = $prev }
-    if ($code -ne 0) {
-        if ($AllowFailure) { return $null }
-        throw (($out | Out-String).Trim())
-    }
-    $out = @($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
-    $text = ($out | Out-String).Trim()
-    if (-not $text) { return $null }
-    try { return $text | ConvertFrom-Json } catch { return $text }
+    if ($AllowFailure) { return Invoke-AfsAz -Args $Args -AllowFailure }
+    return Invoke-AfsAz -Args $Args
 }
 
 function ConvertTo-Array {
@@ -681,7 +685,11 @@ Write-Banner
 Write-Host ''
 Write-Explain "This walks you through whichever job you are here for. Nothing is changed
 without showing you first and asking."
+Write-Host ''
+Write-Host ("  Logging to " + $script:LogFile) -ForegroundColor DarkGray
+Write-Host ("  Level " + $LogLevel + " - re-run with -LogLevel Debug for full Azure CLI traces") -ForegroundColor DarkGray
 
+try {
 while ($true) {
     try {
         $c = Read-Choice -Question 'What would you like to do?' -Options @(
@@ -706,20 +714,25 @@ while ($true) {
             3 { [void](Test-Prerequisites -ForDeploy) }
             4 { Invoke-DocsFlow }
             5 { Invoke-CodexFlow }
-            6 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; return }
+            6 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
         }
     } catch {
-        $msg = $_.Exception.Message
-        $advisor = Join-Path $script:DeployDir 'AfsConfig.ps1'
-        if (Test-Path $advisor) {
-            . $advisor
-            Show-AzureFailure -Message $msg -Context 'That step did not complete.'
-        } else {
-            Write-Host ''
-            Write-Bad $msg
-        }
+        Write-AfsLogException -ErrorRecord $_ -Context 'flow failed'
+        Show-AzureFailure -Message $_.Exception.Message -Context 'That step did not complete.'
+        Write-Host ("  Full detail is in " + $script:LogFile) -ForegroundColor DarkGray
         Write-Explain 'Nothing further was changed. You can choose again, or quit.'
     }
     Write-Host ''
     Write-Rule
+}
+} catch {
+    # anything that escaped the flows - this is the line to read after a crash
+    Write-AfsLogException -ErrorRecord $_ -Context 'wizard crashed'
+    Write-Host ''
+    Write-Host ('  [!]    The wizard stopped unexpectedly: ' + $_.Exception.Message) -ForegroundColor Red
+    Write-Host ('         Details: ' + $script:LogFile) -ForegroundColor DarkGray
+    Stop-AfsLog -Outcome 'crashed'
+    throw
+} finally {
+    Stop-AfsLog -Outcome 'closed'
 }
