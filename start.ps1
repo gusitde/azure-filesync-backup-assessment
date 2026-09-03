@@ -266,10 +266,41 @@ Access Administrator on the subscription." `
     $subs = ConvertTo-Array (Invoke-Cli @('account', 'list', '--query', "[?state=='Enabled'].{name:name,id:id}", '-o', 'json') -AllowFailure)
     $subId = $null
     if ($subs -and $subs.Count -gt 0) {
+        Write-Explain ("These are the subscriptions this account can see (" + $subs.Count + ").")
         $labels = @($subs | ForEach-Object { "$($_.name)   ($($_.id))" })
-        $idx = Read-Choice -Question 'Which subscription?' -Options $labels
+        $idx = Read-Choice -Question 'Which subscription should the work go into?' -Options $labels
         $subId = $subs[$idx].id
+
+        # make it the active one, so everything after this points at the same place
+        Invoke-Cli @('account', 'set', '--subscription', $subId) -AllowFailure | Out-Null
+        Write-Good ("active subscription: " + $subs[$idx].name)
+
+        # a read here is worth more than a promise later: if the account cannot see the
+        # resource groups, it has no Azure role and phase 1 will fail at the first write.
+        $probe = Invoke-Cli @('group', 'list', '--subscription', $subId, '--query', 'length(@)', '-o', 'tsv') -AllowFailure
+        if ($null -eq $probe) {
+            Write-Host ''
+            Write-Bad 'this account can sign in, but cannot read that subscription.'
+            Write-Explain "Being a Global Administrator in Entra ID grants nothing over Azure
+resources - directory roles and Azure roles are separate things.
+Phase 1 would fail at the first write, so it is better to know now."
+            Write-Host ''
+            Write-Host '  Check what you hold:' -ForegroundColor White
+            Write-Host '    az role assignment list --assignee <your-upn> --all -o table' -ForegroundColor Cyan
+            Write-Host ''
+            Write-Host '  If that is empty and you are a Global Administrator, elevate once:' -ForegroundColor White
+            Write-Host '    az rest --method post --url "https://management.azure.com/providers/Microsoft.Authorization/elevateAccess?api-version=2016-07-01"' -ForegroundColor Cyan
+            Write-Host '    az login    # required - the elevation is not in your current token' -ForegroundColor Cyan
+            Write-Host ('    az role assignment create --assignee <your-upn> --role Owner --scope /subscriptions/' + $subId) -ForegroundColor Cyan
+            Write-Host ''
+            if (-not (Read-YesNo -Question 'Carry on anyway and answer the rest?' -DefaultYes $false)) {
+                throw 'Stopped before asking anything else. Grant the access above, then start again.'
+            }
+        } else {
+            Write-Good ("access confirmed - " + $probe + " resource group(s) visible")
+        }
     } else {
+        Write-Note 'no subscriptions were returned for this account.'
         $subId = Read-Answer -Question 'Subscription id?' -Pattern '^[0-9a-fA-F-]{36}$' -PatternHelp 'that should be a GUID.'
     }
 
@@ -352,6 +383,11 @@ Single-file restore comes from the snapshot tier, which allows up to 200 days." 
 function Invoke-BuildFlow {
     if (-not (Test-Prerequisites -ForDeploy)) { return }
 
+    # Sign in FIRST. Until we are authenticated we cannot list the subscriptions you can
+    # actually see, and asking you to type a GUID from memory is a poor substitute.
+    $acct = Ensure-SignedIn
+    if (-not $acct) { return }
+
     if (Test-Path $script:InputsFile) {
         Write-Title 'Your answers'
         Write-Good ("found " + $script:InputsFile)
@@ -372,11 +408,6 @@ function Invoke-BuildFlow {
         Write-Note 'nothing has been changed. Re-run and answer the questions again.'
         return
     }
-
-    # sign in
-    $inputs = Get-Content $script:InputsFile -Raw | ConvertFrom-Json
-    $acct = Ensure-SignedIn -TenantId $inputs.entraGlobalAdmin.tenantId
-    if (-not $acct) { return }
 
     # phase 1
     Write-Title 'Phase 1 - the deployment identity'
@@ -678,8 +709,15 @@ while ($true) {
             6 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; return }
         }
     } catch {
-        Write-Host ''
-        Write-Bad $_.Exception.Message
+        $msg = $_.Exception.Message
+        $advisor = Join-Path $script:DeployDir 'AfsConfig.ps1'
+        if (Test-Path $advisor) {
+            . $advisor
+            Show-AzureFailure -Message $msg -Context 'That step did not complete.'
+        } else {
+            Write-Host ''
+            Write-Bad $msg
+        }
         Write-Explain 'Nothing further was changed. You can choose again, or quit.'
     }
     Write-Host ''

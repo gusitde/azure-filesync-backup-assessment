@@ -102,7 +102,12 @@ function Invoke-Az {
     }
     if ($code -ne 0) {
         if ($AllowFailure) { return $null }
-        throw ("az " + ($Args -join ' ') + "`n" + (($out | Out-String).Trim()))
+        $detail = ($out | Out-String).Trim()
+        # explain it here, where the raw Azure text is still available
+        if (Get-Command Show-AzureFailure -ErrorAction SilentlyContinue) {
+            Show-AzureFailure -Message $detail -Context ("Failed: az " + ($Args -join ' '))
+        }
+        throw ("az " + ($Args -join ' ') + "`n" + $detail)
     }
     # drop any ErrorRecord objects that the stderr merge produced on a successful call
     $out = @($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })

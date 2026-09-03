@@ -130,16 +130,17 @@ $rg = Invoke-Az @('group', 'show', '-n', $cfg.resourceGroup, '-o', 'json') -Allo
 if ($rg) {
     Write-Ok "resource group $($cfg.resourceGroup) already exists"
 } elseif ($PSCmdlet.ShouldProcess($cfg.resourceGroup, 'create resource group')) {
-    $made = Invoke-Az @('group', 'create', '-n', $cfg.resourceGroup, '-l', $cfg.location,
-        '--tags', 'purpose=azure-file-sync', "prefix=$($cfg.namePrefix)", '-o', 'json') -AllowFailure
-    if (-not $made) {
-        Write-Host ''
-        Write-Warn2 'the resource group could not be created. The two usual causes:'
-        Write-Host '     RequestDisallowedByAzure -> this session has not completed MFA.' -ForegroundColor Yellow
-        Write-Host '                                 run:  az logout   then   az login' -ForegroundColor Yellow
-        Write-Host '     AuthorizationFailed      -> the account is not Owner/Contributor here.' -ForegroundColor Yellow
-        Write-Host ''
-        throw 'Write access could not be established. Nothing was created.'
+    # capture the real error rather than a boolean, so the failure can be explained
+    $err = $null
+    try {
+        Invoke-Az @('group', 'create', '-n', $cfg.resourceGroup, '-l', $cfg.location,
+            '--tags', 'purpose=azure-file-sync', "prefix=$($cfg.namePrefix)", '-o', 'json') | Out-Null
+    } catch {
+        $err = $_.Exception.Message
+    }
+    if ($err) {
+        Show-AzureFailure -Message $err -Context 'The resource group could not be created, so nothing else was attempted.'
+        throw 'Stopped before creating anything. Fix the above and run this again.'
     }
     Write-Ok "resource group $($cfg.resourceGroup) created"
 }
@@ -155,8 +156,17 @@ if ($existing) {
     $appId = $existing.appId
     Write-Ok "already exists ($appId)"
 } elseif ($PSCmdlet.ShouldProcess($IdentityName, 'create Entra application and service principal')) {
-    $app = Invoke-Az @('ad', 'app', 'create', '--display-name', $IdentityName, '-o', 'json') -AllowFailure
-    if (-not $app) { throw "Could not create the Entra application. The administrator needs Application Administrator or higher." }
+    $err = $null; $app = $null
+    try { $app = Invoke-Az @('ad', 'app', 'create', '--display-name', $IdentityName, '-o', 'json') }
+    catch { $err = $_.Exception.Message }
+    if (-not $app) {
+        Show-AzureFailure -Message $err -Context 'The Entra application could not be created.'
+        Write-Host '  This step needs a DIRECTORY role, not an Azure one: Application' -ForegroundColor Gray
+        Write-Host '  Administrator or Global Administrator in Entra ID. Check yours with:' -ForegroundColor Gray
+        Write-Host '    az rest --method get --url "https://graph.microsoft.com/v1.0/me/memberOf?$select=displayName"' -ForegroundColor Cyan
+        Write-Host ''
+        throw 'Stopped. The resource group exists; nothing else was created.'
+    }
     $appId = $app.appId
     Invoke-Az @('ad', 'sp', 'create', '--id', $appId, '-o', 'none') -AllowFailure | Out-Null
     Write-Ok "created $appId"
@@ -197,9 +207,16 @@ if ($appId -and $PSCmdlet.ShouldProcess($scope, "grant $Role")) {
     if ($have -and [int]$have -gt 0) {
         Write-Ok 'already granted'
     } else {
-        Invoke-Az @('role', 'assignment', 'create', '--assignee-object-id', $spOid,
-            '--assignee-principal-type', 'ServicePrincipal', '--role', $Role,
-            '--scope', $scope, '-o', 'none') -AllowFailure | Out-Null
+        $err = $null
+        try {
+            Invoke-Az @('role', 'assignment', 'create', '--assignee-object-id', $spOid,
+                '--assignee-principal-type', 'ServicePrincipal', '--role', $Role,
+                '--scope', $scope, '-o', 'none') | Out-Null
+        } catch { $err = $_.Exception.Message }
+        if ($err) {
+            Show-AzureFailure -Message $err -Context "The identity was created, but $Role could not be granted to it."
+            throw 'Stopped. Grant the role, then run this again - it will reuse the identity.'
+        }
         Write-Ok "$Role granted at $scope"
     }
 }

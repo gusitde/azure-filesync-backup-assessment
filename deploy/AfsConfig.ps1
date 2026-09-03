@@ -11,6 +11,155 @@
 
 Set-StrictMode -Version 2.0
 
+function Get-AzureFailureAdvice {
+    <#
+      .SYNOPSIS
+        Turn a raw Azure error into what actually went wrong and what to do about it.
+
+      .DESCRIPTION
+        Azure's errors are accurate and unhelpful. "AuthorizationFailed" covers a missing
+        role, a Global Administrator with no Azure rights at all, and a token issued before
+        a grant was made - three different problems with three different fixes, and the
+        message is the same for all of them.
+
+        This maps the message to a cause and the exact commands that resolve it, so nobody
+        has to recognise the pattern themselves.
+    #>
+    param([string]$Message)
+
+    if (-not $Message) { return $null }
+    $m = $Message
+
+    # a token issued before the access was granted - checked FIRST because the message also
+    # contains AuthorizationFailed, and this is the more specific case
+    if ($m -match 'recently granted' -or $m -match 'refresh your credentials') {
+        return [pscustomobject]@{
+            Cause = 'Your access is correct, but the sign-in token was issued before it was granted.'
+            Why   = 'Azure role changes do not appear in a token that already exists. Signing in again reissues it.'
+            Fix   = @('az login')
+            Then  = 'Then run this again. Nothing needs undoing.'
+        }
+    }
+
+    # multi-factor authentication is required for every write in this tenant
+    if ($m -match 'RequestDisallowedByAzure' -or $m -match 'without authenticating through MFA' -or $m -match 'MFAforAzure') {
+        return [pscustomobject]@{
+            Cause = 'This tenant requires multi-factor authentication before any resource can be created.'
+            Why   = 'Your session signed in without completing MFA. It can read everything and create nothing. This is not a permissions problem - granting yourself more roles will not help.'
+            Fix   = @('az logout', 'az login')
+            Then  = 'Complete the MFA prompt in the browser, then run this again.'
+        }
+    }
+
+    # cannot create role assignments - needs Owner, User Access Administrator, or elevation
+    if ($m -match 'Authorization/roleAssignments/write') {
+        return [pscustomobject]@{
+            Cause = 'This account cannot grant roles at that scope.'
+            Why   = 'Creating the deployment identity needs Owner or User Access Administrator on the subscription. If you are an Entra Global Administrator with no Azure role, you have rights over the directory but none over Azure resources - they are separate, and this is the usual cause.'
+            Fix   = @(
+                '# if you are a Global Administrator, elevate once:',
+                'az rest --method post --url "https://management.azure.com/providers/Microsoft.Authorization/elevateAccess?api-version=2016-07-01"',
+                'az login    # required - the elevation is not in your current token',
+                'az role assignment create --assignee <your-upn> --role Owner --scope /subscriptions/<sub-id>'
+            )
+            Then  = 'Then run this again. Turn the elevation back off afterwards in Entra ID > Properties > Access management for Azure resources.'
+        }
+    }
+
+    # a plain missing role
+    if ($m -match 'AuthorizationFailed' -or $m -match 'does not have authorization to perform action') {
+        return [pscustomobject]@{
+            Cause = 'This account does not have the Azure role it needs at that scope.'
+            Why   = 'Being a Global Administrator in Entra ID grants nothing over Azure resources - directory roles and Azure roles are separate. Check what you actually hold before assuming.'
+            Fix   = @(
+                'az role assignment list --assignee <your-upn> --all -o table',
+                '# if that is empty and you are a Global Administrator:',
+                'az rest --method post --url "https://management.azure.com/providers/Microsoft.Authorization/elevateAccess?api-version=2016-07-01"',
+                'az login',
+                'az role assignment create --assignee <your-upn> --role Owner --scope /subscriptions/<sub-id>'
+            )
+            Then  = 'You need Contributor at minimum, or Owner to also create the deployment identity.'
+        }
+    }
+
+    # storage account names are global
+    if ($m -match 'StorageAccountAlreadyTaken' -or $m -match 'is already taken' -or $m -match 'AccountNameInvalid') {
+        return [pscustomobject]@{
+            Cause = 'That storage account name is not available.'
+            Why   = 'Storage account names are globally unique across all of Azure, not just your tenant, and must be 3-24 lowercase letters and digits.'
+            Fix   = @('# change azure.uniqueSuffix or azure.namePrefix in your inputs file, then:', 'az storage account check-name --name <candidate>')
+            Then  = 'Run with -ShowResolved to see the derived name before trying again.'
+        }
+    }
+
+    # the CLI extension is missing
+    if ($m -match 'dns-resolver' -and ($m -match 'not in the' -or $m -match 'extension' -or $m -match 'misspelled')) {
+        return [pscustomobject]@{
+            Cause = 'The dns-resolver CLI extension is not installed.'
+            Why   = 'It is an extension rather than part of the base CLI, so the command is reported as unrecognised instead of as a missing component.'
+            Fix   = @('az extension add --name dns-resolver')
+            Then  = 'Then run this again.'
+        }
+    }
+
+    if ($m -match 'MissingSubscription' -or $m -match 'SubscriptionNotFound') {
+        return [pscustomobject]@{
+            Cause = 'The CLI has no subscription selected, or cannot see the one requested.'
+            Why   = 'Either you are not signed in to the right tenant, or the account has no access to that subscription.'
+            Fix   = @('az account list -o table', 'az account set --subscription <id>')
+            Then  = 'Check the subscription id in your inputs file matches one you can see.'
+        }
+    }
+
+    if ($m -match 'ResourceGroupNotFound') {
+        return [pscustomobject]@{
+            Cause = 'The resource group does not exist yet.'
+            Why   = 'Phase 1 creates it. If you are running phase 2 directly, phase 1 has not completed.'
+            Fix   = @('.\Phase1-New-DeploymentIdentity.ps1 -InputFile .\inputs.json')
+            Then  = 'Then run phase 2 with the context it writes.'
+        }
+    }
+
+    return $null
+}
+
+function Show-AzureFailure {
+    <# Print the advice above in a form somebody can act on without reading Azure docs. #>
+    param([string]$Message, [string]$Context)
+
+    Write-Host ''
+    if ($Context) { Write-Host ("  " + $Context) -ForegroundColor Red }
+
+    $a = Get-AzureFailureAdvice -Message $Message
+    if (-not $a) {
+        Write-Host '  The error Azure returned:' -ForegroundColor Yellow
+        Write-Host ''
+        foreach ($line in ($Message -split "`n" | Select-Object -First 6)) {
+            Write-Host ("    " + $line.Trim()) -ForegroundColor Gray
+        }
+        Write-Host ''
+        Write-Host '  This one is not recognised. docs/GETTING-STARTED.md has a troubleshooting table.' -ForegroundColor Yellow
+        Write-Host ''
+        return
+    }
+
+    Write-Host ''
+    Write-Host ('  What went wrong:  ' + $a.Cause) -ForegroundColor Yellow
+    Write-Host ''
+    foreach ($line in ($a.Why -split "(?<=\.)\s+")) {
+        if ($line.Trim()) { Write-Host ("  " + $line.Trim()) -ForegroundColor Gray }
+    }
+    Write-Host ''
+    Write-Host '  Do this:' -ForegroundColor White
+    foreach ($cmd in $a.Fix) {
+        if ($cmd -match '^\s*#') { Write-Host ("    " + $cmd) -ForegroundColor DarkGray }
+        else { Write-Host ("    " + $cmd) -ForegroundColor Cyan }
+    }
+    Write-Host ''
+    Write-Host ("  " + $a.Then) -ForegroundColor Gray
+    Write-Host ''
+}
+
 function Get-AfsProp {
     param($Object, [string]$Name, $Default = $null)
     if ($null -eq $Object) { return $Default }
