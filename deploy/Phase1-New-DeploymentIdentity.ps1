@@ -127,6 +127,7 @@ Write-Ok ("signed in as " + $acct.user.name)
 if ($cfg.adminUpn -and $acct.user.name -ne $cfg.adminUpn) {
     Write-Warn2 "signed in as $($acct.user.name) but the inputs file names $($cfg.adminUpn)"
 }
+$env:AFS_SUBSCRIPTION_ID = $cfg.subscriptionId   # every az call is pinned to it (see Invoke-AfsAz)
 Invoke-Az @('account', 'set', '--subscription', $cfg.subscriptionId) -AllowFailure | Out-Null
 Write-Ok 'subscription set'
 

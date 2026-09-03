@@ -15,3 +15,7 @@ deploy/inputs.json
 # run logs and telemetry written by start.ps1 and the deploy scripts
 logs/
 deploy/deployment-context.json
+
+# assessment output and generated as-built documents - real resource names, never committed
+assessment-latest/
+as-built/

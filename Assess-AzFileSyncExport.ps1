@@ -542,5 +542,26 @@ $mdPath = Join-Path $OutputPath 'assessment.md'; $jsonPath = Join-Path $OutputPa
 [System.IO.File]::WriteAllText($mdPath, ($md -join "`n") + "`n", (New-Object System.Text.UTF8Encoding($false)))
 [System.IO.File]::WriteAllText($jsonPath, ([ordered]@{ tool = 'Assess-AzFileSyncExport.ps1'; toolVersion = $ToolVersion; customer = $CustomerName; export = $ExportPath; assessedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); counts = $counts; findings = $sorted } | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
 Write-Host ("Findings: High={0} Medium={1} Low={2} Info={3} -> {4}" -f $counts.High, $counts.Medium, $counts.Low, $counts.Info, $mdPath)
+
+# -- the HTML report: same findings, tabbed, self-contained, opens anywhere ----------------
+# The export's summary.md (if the export was a folder or zip) goes on the Scope tab, and the
+# rule catalog on the Rules tab when it was requested.
+$htmlPath = Join-Path $OutputPath 'assessment.html'
+try {
+  . (Join-Path $PSScriptRoot 'Render-AfsAssessmentHtml.ps1')
+  $summaryMd = $null
+  foreach ($cand in @((Join-Path $root 'summary.md'), (Join-Path $OutputPath 'summary.md'))) {
+    if ($cand -and (Test-Path $cand)) { $summaryMd = $cand; break }
+  }
+  $rulesMd = $null
+  if ($IncludeCatalog) {
+    $rulesMd = Join-Path $OutputPath 'rules.md'
+    [System.IO.File]::WriteAllText($rulesMd, (Get-Catalog), (New-Object System.Text.UTF8Encoding($false)))
+  }
+  $null = ConvertTo-AfsAssessmentHtml -FindingsPath $jsonPath -OutputPath $htmlPath -SummaryPath $summaryMd -RulesPath $rulesMd
+  Write-Host ("Report: {0}" -f $htmlPath)
+} catch {
+  Write-Warning ("assessment.html was not produced: " + $_.Exception.Message)
+}
 if ($tempRoot -and (Test-Path $tempRoot)) { Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 if ($PassThru) { $sorted }

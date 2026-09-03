@@ -73,7 +73,7 @@ $script:Created = New-Object System.Collections.ArrayList
 $script:Verifications = New-Object System.Collections.ArrayList
 $script:StepNo = 0
 
-$script:StepTotal = 15
+$script:StepTotal = 17
 $script:ProgressActivity = 'Azure File Sync deployment'
 function Write-Step {
     param([string]$Text)
@@ -104,8 +104,11 @@ function ConvertTo-Array {
         here instead: null becomes empty, a scalar becomes one element, an array stays. #>
     param($Value)
     if ($null -eq $Value) { return @() }
-    if ($Value -is [System.Array]) { return $Value }
-    return @($Value)
+    # the unary comma matters: 'return $array' goes through the pipeline, which unwraps a
+    # ONE-element array back to its scalar, and a PSCustomObject has no .Count - the as-built
+    # reported the deployment identity's single role as 'not readable' because of exactly that
+    if ($Value -is [System.Array]) { return ,$Value }
+    return ,@($Value)
 }
 
 function Get-Prop {
@@ -162,6 +165,7 @@ if ($ShowResolved) {
 }
 
 $SubscriptionId = $cfg.subscriptionId
+$env:AFS_SUBSCRIPTION_ID = $SubscriptionId   # every az call is pinned to it (see Invoke-AfsAz)
 $Location       = $cfg.location
 $ResourceGroup  = $cfg.resourceGroup
 $SaName         = $cfg.storageAccountName
@@ -281,6 +285,46 @@ if (-not $SkipPreflight) {
             }
         }
         Write-Ok 'dns-resolver extension present'
+    }
+
+    # Resource providers. A subscription that has never used a service has its provider
+    # unregistered, and the first create fails with MissingSubscriptionRegistration - which is
+    # how the first live build of this kit stopped at the Storage Sync Service. Every namespace
+    # this build touches is checked here and registered if needed; registration is idempotent
+    # and usually completes within a minute or two.
+    $providers = @(
+        @{ ns = 'Microsoft.Storage';          why = 'storage account and file shares' },
+        @{ ns = 'Microsoft.Network';          why = 'virtual network, private endpoints, private DNS zones, DNS Private Resolver' },
+        @{ ns = 'Microsoft.StorageSync';      why = 'Storage Sync Service (Azure File Sync)' },
+        @{ ns = 'Microsoft.RecoveryServices'; why = 'Recovery Services vault and Azure Backup' },
+        @{ ns = 'Microsoft.Insights';         why = 'diagnostic settings and metric alerts' }
+    )
+    $pending = @()
+    foreach ($pr in $providers) {
+        $state = Invoke-Az @('provider', 'show', '-n', $pr.ns, '--query', 'registrationState', '-o', 'tsv') -AllowFailure
+        if ($state -eq 'Registered') {
+            Write-Ok ("provider " + $pr.ns + " registered")
+        } else {
+            Write-Info ("provider " + $pr.ns + " is " + $(if ($state) { $state } else { 'unknown' }) + " - needed for " + $pr.why)
+            if (Test-Change $pr.ns 'register resource provider') {
+                Invoke-Az @('provider', 'register', '-n', $pr.ns, '-o', 'none') -AllowFailure | Out-Null
+                $pending += $pr.ns
+            }
+        }
+    }
+    if ($pending.Count) {
+        Write-Info ("waiting for registration: " + ($pending -join ', ') + " (usually 1-3 minutes)")
+        $deadline = (Get-Date).AddMinutes(10)
+        while ($pending.Count -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 10
+            $still = @()
+            foreach ($ns in $pending) {
+                $st = Invoke-Az @('provider', 'show', '-n', $ns, '--query', 'registrationState', '-o', 'tsv') -AllowFailure
+                if ($st -eq 'Registered') { Write-Ok ("provider " + $ns + " registered") } else { $still += $ns }
+            }
+            $pending = $still
+        }
+        if ($pending.Count) { throw ("These resource providers did not finish registering in 10 minutes: " + ($pending -join ', ') + ". Check 'az provider show -n <namespace>' and run again.") }
     }
 
     $avail = Invoke-Az @('storage', 'account', 'check-name', '--name', $SaName, '-o', 'json') -AllowFailure
@@ -420,8 +464,14 @@ function New-Endpoint {
         Write-Ok "$Name created"
     }
     if (Test-Change $Name 'attach dns zone group') {
+        # 'dns-zone-group show' answers {} with exit code 0 when nothing is attached, so an
+        # exit-code test passes and the A records are never written - the endpoint then only
+        # resolves publicly (first live build: both zones held nothing but their SOA). Test for
+        # an actual zone config instead.
         $zg = Invoke-Az @('network', 'private-endpoint', 'dns-zone-group', 'show', '-g', $ResourceGroup, '--endpoint-name', $Name, '-n', 'default', '-o', 'json') -AllowFailure
-        if (-not $zg) {
+        $attached = [bool]($zg -and $zg.PSObject.Properties['privateDnsZoneConfigs'] -and @($zg.privateDnsZoneConfigs).Count -gt 0)
+        if ($attached) { Write-Ok "$Name dns zone group already attached" }
+        else {
             Invoke-Az @('network', 'private-endpoint', 'dns-zone-group', 'create', '-g', $ResourceGroup,
                 '--endpoint-name', $Name, '-n', 'default',
                 '--private-dns-zone', $Zone, '--zone-name', $GroupId, '-o', 'none') | Out-Null
@@ -429,6 +479,7 @@ function New-Endpoint {
         }
     }
     Add-Verification "$Name resolves to a private IP" "az network private-endpoint show -n $Name -g $ResourceGroup --query 'customDnsConfigs[0].ipAddresses[0]' -o tsv"
+    Add-Verification "$Zone holds the A record(s) for $Name" "az network private-dns record-set a list -g $ResourceGroup -z $Zone --query '[].{name:name,ip:aRecords[0].ipv4Address}' -o table"
 }
 
 if ($Pl -and (Get-Prop $Pl 'createPrivateDnsZones' $true)) {
@@ -543,6 +594,68 @@ if ($Backup -and (Get-Prop $Backup 'enabled' $false)) {
     Add-Verification 'vault redundancy' "az backup vault backup-properties show -n $VaultName -g $ResourceGroup --query '[0].properties.storageModelType' -o tsv"
     Add-Verification 'cross-region restore' "az backup vault backup-properties show -n $VaultName -g $ResourceGroup --query '[0].properties.crossRegionRestoreFlag' -o tsv"
     Add-Verification 'protected item count' "az backup item list -v $VaultName -g $ResourceGroup --query 'length(@)' -o tsv"
+
+    # ---- backup policy. Azure Files backup in a Recovery Services vault is snapshot-based:
+    # one daily snapshot, kept N days, item-level restore. The JSON is the shape that
+    # 'az backup policy show' returns, written to a temp file because the CLI reads the
+    # policy from a path.
+    $PolicyName    = Get-Prop $Backup 'policyName' 'afs-daily-60d'
+    $RetentionDays = [int](Get-Prop $Backup 'dailyRetentionDays' 60)
+    Write-Step "Backup policy $PolicyName (daily snapshot, $RetentionDays days)"
+    $pol = Invoke-Az @('backup', 'policy', 'show', '-v', $VaultName, '-g', $ResourceGroup, '-n', $PolicyName, '-o', 'json') -AllowFailure
+    if ($pol) { Write-Ok 'already exists' }
+    elseif (Test-Change $PolicyName 'create backup policy') {
+        $policy = [ordered]@{
+            properties = [ordered]@{
+                backupManagementType = 'AzureStorage'
+                workloadType         = 'AzureFileShare'
+                schedulePolicy       = [ordered]@{
+                    schedulePolicyType   = 'SimpleSchedulePolicy'
+                    scheduleRunFrequency = 'Daily'
+                    scheduleRunTimes     = @('2026-01-01T02:00:00Z')
+                }
+                retentionPolicy      = [ordered]@{
+                    retentionPolicyType = 'LongTermRetentionPolicy'
+                    dailySchedule       = [ordered]@{
+                        retentionTimes    = @('2026-01-01T02:00:00Z')
+                        retentionDuration = [ordered]@{ count = $RetentionDays; durationType = 'Days' }
+                    }
+                }
+                timeZone             = 'UTC'
+            }
+        }
+        $policyFile = Join-Path ([IO.Path]::GetTempPath()) ('afs-policy-' + $PolicyName + '.json')
+        [System.IO.File]::WriteAllText($policyFile, ($policy | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+        try {
+            Invoke-Az @('backup', 'policy', 'create', '-v', $VaultName, '-g', $ResourceGroup, '-n', $PolicyName,
+                '--backup-management-type', 'AzureStorage', '--workload-type', 'AzureFileShare',
+                '--policy', $policyFile, '-o', 'none') | Out-Null
+        } finally { Remove-Item $policyFile -ErrorAction SilentlyContinue }
+        Add-Created 'backupPolicy' $PolicyName
+        Write-Ok "created ($RetentionDays day daily retention)"
+    }
+    Add-Verification 'backup policy retention days' "az backup policy show -v $VaultName -g $ResourceGroup -n $PolicyName --query 'properties.retentionPolicy.dailySchedule.retentionDuration.count' -o tsv"
+
+    # ---- protect every share. The first protected item registers the storage account with
+    # the vault and freezes the vault redundancy - which is why redundancy was set first.
+    # Needs 'Allow storage account key access' on the account (kept on by this build).
+    Write-Step 'Protect the file shares'
+    # one plain list, counted here: a JMESPath filter with brackets, parentheses and '=='
+    # is re-parsed by the az.cmd wrapper on Windows ("-o was unexpected at this time")
+    $protected = ConvertTo-Array (Invoke-Az @('backup', 'item', 'list', '-v', $VaultName, '-g', $ResourceGroup,
+        '--backup-management-type', 'AzureStorage', '--workload-type', 'AzureFileShare',
+        '--query', '[].properties.friendlyName', '-o', 'tsv') -AllowFailure)
+    foreach ($s in $Shares) {
+        $sn = $s.name
+        if ($protected -contains $sn) { Write-Ok "$sn already protected" }
+        elseif (Test-Change $sn 'enable backup protection') {
+            Invoke-Az @('backup', 'protection', 'enable-for-azurefileshare', '-v', $VaultName, '-g', $ResourceGroup,
+                '--policy-name', $PolicyName, '--storage-account', $SaName, '--azure-file-share', $sn, '-o', 'none') | Out-Null
+            Add-Created 'protectedShare' $sn
+            Write-Ok "$sn protected by $PolicyName"
+        }
+    }
+    Add-Verification 'protected shares' "az backup item list -v $VaultName -g $ResourceGroup --backup-management-type AzureStorage --query '[].{share:properties.friendlyName,state:properties.protectionState,policy:properties.policyName}' -o table"
 }
 
 # ----------------------------------------------------------- lock down -------
@@ -570,6 +683,21 @@ if ($WhatIfPreference) {
     Write-Host ("Deployment complete. {0} object(s) created this run." -f $script:Created.Count) -ForegroundColor Green
     if ($script:Created.Count) {
         $script:Created | Format-Table -AutoSize | Out-String | Write-Host
+    }
+    # the as-built is generated from what actually exists now, not from what was intended
+    if ($ctx) {
+        Write-Host ''
+        Write-Host 'Generating the as-built from the live estate' -ForegroundColor Cyan
+        try {
+            $ab = & (Join-Path $PSScriptRoot 'Export-AfsAsBuilt.ps1') -Context $Context
+            if ($ab) { Add-Verification 'as-built document' ("Get-Content '" + $ab.Markdown + "'") }
+        } catch {
+            Write-Warn2 ('as-built not generated: ' + $_.Exception.Message)
+            Write-Warn2 ('generate it later with: .\Export-AfsAsBuilt.ps1 -Context ' + $Context)
+        }
+    } else {
+        Write-Host ''
+        Write-Host 'Tip: run phase 2 with -Context to have the as-built generated automatically.' -ForegroundColor DarkGray
     }
 }
 

@@ -70,8 +70,11 @@ function ConvertTo-Array {
         here instead: null becomes empty, a scalar becomes one element, an array stays. #>
     param($Value)
     if ($null -eq $Value) { return @() }
-    if ($Value -is [System.Array]) { return $Value }
-    return @($Value)
+    # the unary comma matters: 'return $array' goes through the pipeline, which unwraps a
+    # ONE-element array back to its scalar, and a PSCustomObject has no .Count - the as-built
+    # reported the deployment identity's single role as 'not readable' because of exactly that
+    if ($Value -is [System.Array]) { return ,$Value }
+    return ,@($Value)
 }
 
 function Get-Prop {
@@ -90,6 +93,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Context') {
 }
 
 $SubscriptionId = $cfg.subscriptionId
+$env:AFS_SUBSCRIPTION_ID = $SubscriptionId   # every az call is pinned to it (see Invoke-AfsAz)
 $ResourceGroup  = $cfg.resourceGroup
 $Backup         = [pscustomobject]@{ vaultName = $cfg.vaultName }
 
@@ -129,6 +133,7 @@ if ($unknown.Count -and -not $Force) {
 
 Write-Step 'Recovery Services vault'
 $VaultName = Get-Prop $Backup 'vaultName'
+$script:VaultBlocked = $false
 if ($VaultName) {
     $v = Invoke-Az @('backup', 'vault', 'show', '-n', $VaultName, '-g', $ResourceGroup, '-o', 'json') -AllowFailure
     if ($v) {
@@ -148,7 +153,19 @@ if ($VaultName) {
         } else { Write-Ok 'no protected items' }
         if ($PSCmdlet.ShouldProcess($VaultName, 'delete recovery services vault')) {
             Invoke-Az @('backup', 'vault', 'delete', '-n', $VaultName, '-g', $ResourceGroup, '--yes', '-o', 'none') -AllowFailure | Out-Null
-            Write-Ok 'vault deleted'
+            # Soft delete (on by default, and 'AlwaysON' where a policy enforces it) keeps the
+            # removed backup data for a retention period, and Azure refuses to delete a vault
+            # that still holds it. Check rather than assume; the first live teardown hit this.
+            $still = Invoke-Az @('backup', 'vault', 'show', '-n', $VaultName, '-g', $ResourceGroup, '-o', 'json') -AllowFailure
+            if ($still) {
+                $script:VaultBlocked = $true
+                $days = 14
+                try { $days = [int]$still.properties.securitySettings.softDeleteSettings.softDeleteRetentionPeriodInDays } catch { }
+                Write-Warn2 ("vault NOT deleted: soft delete keeps the removed backup data for " + $days + " days, and a vault holding soft-deleted items cannot be deleted")
+                Write-Warn2 ("everything else is removed now; delete the vault and the group after " + (Get-Date).AddDays($days).ToString('yyyy-MM-dd') + " with:")
+                Write-Host ("        az backup vault delete -n " + $VaultName + " -g " + $ResourceGroup + " --yes")
+                Write-Host ("        az group delete -n " + $ResourceGroup + " --yes")
+            } else { Write-Ok 'vault deleted' }
         }
     } else { Write-Ok 'vault not present' }
 }
@@ -163,13 +180,30 @@ foreach ($l in $locks) {
 }
 
 Write-Step ('Resource group ' + $ResourceGroup)
-if ($PSCmdlet.ShouldProcess($ResourceGroup, 'DELETE the resource group and everything in it')) {
+if ($script:VaultBlocked) {
+    # The group cannot go while the vault is in it, so everything else goes one by one.
+    # Dependencies (endpoint before its NIC and subnet, inbound endpoint before the resolver)
+    # sort themselves out across passes: whatever fails this pass is retried on the next.
+    Write-Warn2 'resource group kept (the vault is still in it); removing every other resource individually'
+    for ($pass = 1; $pass -le 4; $pass++) {
+        $ids = ConvertTo-Array (Invoke-Az @('resource', 'list', '-g', $ResourceGroup, '--query', "[?type!='Microsoft.RecoveryServices/vaults'].id", '-o', 'json') -AllowFailure)
+        if ($ids.Count -eq 0) { break }
+        Write-Host ("      ..    pass " + $pass + ": " + $ids.Count + " resource(s) left") -ForegroundColor DarkGray
+        foreach ($id in $ids) {
+            if ($PSCmdlet.ShouldProcess($id, 'delete resource')) {
+                Invoke-Az @('resource', 'delete', '--ids', $id, '-o', 'none') -AllowFailure | Out-Null
+            }
+        }
+    }
+    $left = ConvertTo-Array (Invoke-Az @('resource', 'list', '-g', $ResourceGroup, '--query', "[?type!='Microsoft.RecoveryServices/vaults'].name", '-o', 'json') -AllowFailure)
+    if ($left.Count) { Write-Warn2 ("still present: " + ($left -join ', ')) } else { Write-Ok 'everything except the vault is gone' }
+} elseif ($PSCmdlet.ShouldProcess($ResourceGroup, 'DELETE the resource group and everything in it')) {
     Invoke-Az @('group', 'delete', '-n', $ResourceGroup, '--yes', '--no-wait', '-o', 'none') | Out-Null
-Complete-AfsProgress -Activity $script:ProgressActivity
-Write-AfsPhaseStrip -Done $script:StepTotal -Total $script:StepTotal
     Write-Ok 'delete issued (asynchronous)'
     Write-Host ''
     Write-Host 'Confirm it is gone with:' -ForegroundColor White
     Write-Host ("  az group exists -n " + $ResourceGroup)
 }
+Complete-AfsProgress -Activity $script:ProgressActivity
+Write-AfsPhaseStrip -Done $script:StepTotal -Total $script:StepTotal
 Write-Host ''

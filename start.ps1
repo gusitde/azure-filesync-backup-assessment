@@ -110,7 +110,13 @@ function Read-YesNo {
         if ($Why) { Write-Explain $Why }
         Write-Host ("  > [$d] ") -NoNewline -ForegroundColor White
         $a = Read-Host
-        if (-not $a) { return $DefaultYes }
+        if (-not $a) {
+            # Enter on a real console means "take the default". With redirected input an empty
+            # read is usually end-of-input, and assuming "yes" there once resumed a live build
+            # from a scripted test - so a silent answer never confirms anything.
+            if ([Console]::IsInputRedirected) { Write-Note 'no answer (input ended) - treating that as no.'; return $false }
+            return $DefaultYes
+        }
         if ($a -match '^[Yy]') { return $true }
         if ($a -match '^[Nn]') { return $false }
         Write-Bad 'answer y or n.'
@@ -152,8 +158,11 @@ function ConvertTo-Array {
         here instead. #>
     param($Value)
     if ($null -eq $Value) { return @() }
-    if ($Value -is [System.Array]) { return $Value }
-    return @($Value)
+    # the unary comma matters: 'return $array' goes through the pipeline, which unwraps a
+    # ONE-element array back to its scalar, and a PSCustomObject has no .Count - the as-built
+    # reported the deployment identity's single role as 'not readable' because of exactly that
+    if ($Value -is [System.Array]) { return ,$Value }
+    return ,@($Value)
 }
 
 # -------------------------------------------------------- prerequisites -----
@@ -276,6 +285,7 @@ Access Administrator on the subscription." `
         $subId = $subs[$idx].id
 
         # make it the active one, so everything after this points at the same place
+        $env:AFS_SUBSCRIPTION_ID = $subId   # every az call is pinned to it (see Invoke-AfsAz)
         Invoke-Cli @('account', 'set', '--subscription', $subId) -AllowFailure | Out-Null
         Write-Good ("active subscription: " + $subs[$idx].name)
 
@@ -384,6 +394,105 @@ Single-file restore comes from the snapshot tier, which allows up to 200 days." 
 
 # ----------------------------------------------------------------- flows ----
 
+function Invoke-Phase2WithRetry {
+    <# Run phase 2 from the context; on failure explain it and offer to run again. The build is
+       idempotent - everything already created is found and skipped - so a retry continues from
+       the failed step rather than starting over. #>
+    param([int]$MaxAttempts = 5)
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        Push-Location $script:DeployDir
+        $failed = $false
+        try {
+            & (Join-Path $script:DeployDir 'Deploy-AfsEnvironment.ps1') -Context $script:ContextFile
+        } catch {
+            $failed = $true
+            Write-AfsLogException -ErrorRecord $_ -Context ("phase 2 attempt " + $attempt + " failed")
+            Show-AzureFailure -Message $_.Exception.Message -Context ("Phase 2 stopped (attempt " + $attempt + " of " + $MaxAttempts + ").")
+        } finally { Pop-Location }
+        if (-not $failed) { return $true }
+        if ($attempt -ge $MaxAttempts) { Write-Bad 'giving up after repeated failures. Fix the cause above, then choose Resume from the menu.'; return $false }
+        Write-Explain "The build is idempotent: everything already created is found and skipped, so a
+retry continues from the step that failed. If the fix above needs you to do
+something first (sign in again, register a provider), do it now, then answer yes."
+        if (-not (Read-YesNo -Question 'Retry phase 2 now?' -DefaultYes $true)) {
+            Write-Note 'stopped. Choose Resume the last build from the menu when you are ready.'
+            return $false
+        }
+        Write-Title ("Phase 2 - retry " + ($attempt + 1))
+    }
+    return $false
+}
+
+function Invoke-ResumeFlow {
+    <# Menu entry: pick up a build that crashed or was interrupted, from its saved context. #>
+    if (-not (Test-Prerequisites -ForDeploy)) { return }
+    if (-not (Test-Path $script:ContextFile)) {
+        Write-Bad 'no deployment context found - there is nothing to resume. Run a build first.'
+        return
+    }
+    $ctx = Read-AfsJsonc -Path $script:ContextFile
+    Write-Title 'Resume the last build'
+    Write-Host ("  context   : " + $script:ContextFile)
+    Write-Host ("  target    : " + $ctx.config.resourceGroup + " in " + $ctx.config.subscriptionId)
+    Write-Host ("  identity  : " + $ctx.identity.displayName + " (" + $ctx.identity.appId + ")")
+    Write-Host ("  created   : " + $ctx.createdUtc + " by " + $ctx.createdBy)
+    Write-Explain "Phase 2 will run again from that context. Everything that already exists is
+found and skipped; only what is missing is created."
+    $acct = Ensure-SignedIn -TenantId $ctx.identity.tenantId
+    if (-not $acct) { return }
+    if (Read-YesNo -Question 'Dry run first?' -DefaultYes $true) {
+        Push-Location $script:DeployDir
+        try { & (Join-Path $script:DeployDir 'Deploy-AfsEnvironment.ps1') -Context $script:ContextFile -WhatIf }
+        catch { Show-AzureFailure -Message $_.Exception.Message -Context 'The dry run did not complete.' }
+        finally { Pop-Location }
+    }
+    if (-not (Read-YesNo -Question 'Resume the build now?' -DefaultYes $true)) { return }
+    [void](Invoke-Phase2WithRetry)
+}
+
+function Get-AfsReports {
+    <# Every assessment.html and as-built html in the repository, newest first. #>
+    $found = @()
+    foreach ($pattern in @('assessment.html', 'AS-BUILT-*.html')) {
+        $found += @(Get-ChildItem -Path $script:Root -Filter $pattern -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\(logs|\.git|node_modules)\\' })
+    }
+    return @($found | Sort-Object LastWriteTime -Descending)
+}
+
+function Invoke-ReportsFlow {
+    <# Menu entry: open the findings and as-built reports that have been produced. #>
+    while ($true) {
+        Write-Title 'Reports'
+        $reports = Get-AfsReports
+        if ($reports.Count -eq 0) {
+            Write-Note 'no reports yet. Run an assessment (option 2) or a build (option 1) first.'
+            return
+        }
+        $labels = @()
+        foreach ($r in $reports) {
+            $kind = if ($r.Name -like 'AS-BUILT-*') { 'as-built  ' } else { 'assessment' }
+            $labels += ("{0}  {1}  {2}" -f $kind, $r.LastWriteTime.ToString('yyyy-MM-dd HH:mm'), $r.FullName.Substring($script:Root.Length + 1))
+        }
+        $labels += 'Generate the as-built for the last build now'
+        $labels += 'Back'
+        $c = Read-Choice -Question 'Which report?' -Options $labels
+        if ($c -eq $reports.Count) {
+            if (-not (Test-Path $script:ContextFile)) { Write-Bad 'no deployment context - build first.'; continue }
+            $acct = Ensure-SignedIn
+            if (-not $acct) { continue }
+            Push-Location $script:DeployDir
+            try { & (Join-Path $script:DeployDir 'Export-AfsAsBuilt.ps1') -Context $script:ContextFile | Out-Null }
+            catch { Show-AzureFailure -Message $_.Exception.Message -Context 'The as-built was not generated.' }
+            finally { Pop-Location }
+            continue
+        }
+        if ($c -eq ($reports.Count + 1)) { return }
+        Start-Process $reports[$c].FullName
+        Write-Good ('opened ' + $reports[$c].FullName)
+    }
+}
+
 $script:StageTotal = 7
 function Set-WizardStage {
     # overall progress across the whole build, above the per-script bars (Id 1 stacks over Id 0)
@@ -471,17 +580,7 @@ Administrator on this subscription."
 
     Set-WizardStage 6 'dry run reviewed - building'
     Write-Title 'Phase 2 - building'
-    Push-Location $script:DeployDir
-    try {
-        & (Join-Path $script:DeployDir 'Deploy-AfsEnvironment.ps1') -Context $script:ContextFile
-    } catch {
-        Write-Bad $_.Exception.Message
-        Write-Explain "The script is idempotent - fix the cause and run this again. It continues
-from where it stopped rather than starting over."
-        Pop-Location
-        return
-    }
-    Pop-Location
+    if (-not (Invoke-Phase2WithRetry)) { return }
 
     Set-WizardStage 7 'built'
     Complete-AfsProgress -Activity 'Azure File Sync wizard' -Id 1
@@ -614,7 +713,12 @@ anything still reachable over the public endpoint."
         $a = @('-ExportPath', $path, '-CustomerName', $customer)
         if ($private) { $a += '-PrivateTrafficRequired' }
         & (Join-Path $script:Root 'Assess-AzFileSyncExport.ps1') @a
-    } catch { Write-Bad $_.Exception.Message }
+        $html = Get-AfsReports | Where-Object { $_.Name -eq 'assessment.html' } | Select-Object -First 1
+        if ($html -and (Read-YesNo -Question 'Open the HTML report now?' -DefaultYes $true)) {
+            Start-Process $html.FullName
+            Write-Good ('opened ' + $html.FullName)
+        }
+    } catch { Show-AzureFailure -Message $_.Exception.Message -Context 'The assessment did not complete.' }
     finally { Pop-Location }
 }
 
@@ -799,6 +903,8 @@ while ($true) {
             'Just check my prerequisites',
             'Read the documentation',
             'Browse the blueprints, playbooks and runbooks',
+            'Resume the last build (retry after a crash)',
+            'Open the findings and as-built reports',
             'Quit'
         )
     } catch {
@@ -814,7 +920,9 @@ while ($true) {
             3 { [void](Test-Prerequisites -ForDeploy) }
             4 { Invoke-DocsFlow }
             5 { Invoke-CodexFlow }
-            6 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
+            6 { Invoke-ResumeFlow }
+            7 { Invoke-ReportsFlow }
+            8 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
         }
     } catch {
         Write-AfsLogException -ErrorRecord $_ -Context 'flow failed'

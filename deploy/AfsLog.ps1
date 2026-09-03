@@ -74,7 +74,8 @@ function Start-AfsLog {
 function Stop-AfsLog {
     param([string]$Outcome = 'ended')
     if ($env:AFS_LOG_FILE) { Write-AfsLog -Level INFO -Message ("log " + $Outcome) }
-    try { Stop-Transcript -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
+    # Stop-Transcript has no -WhatIf; only Start-Transcript needs the preference override
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
 }
 
 function Write-AfsLog {
@@ -152,6 +153,17 @@ function Invoke-AfsAz {
         $extra = @($extra | Where-Object { $_ -ne '--verbose' -and $_ -ne '--debug' })
     }
     $all = @($Args) + @($extra)
+
+    # Pin every call to the subscription this run resolved. The CLI's default subscription
+    # lives in a profile SHARED by every window on the machine, so an 'az login' or
+    # 'az account set' somewhere else in the middle of a build silently retargets the next
+    # call - the first live run lost a share's backup protection to exactly that. Commands
+    # that take no --subscription are left alone.
+    $noSub = @('login', 'logout', 'account', 'extension', 'version', 'config', 'configure', 'upgrade', 'find', 'feedback', 'interactive', 'ad', 'rest', 'cloud', 'self-test')
+    if ($env:AFS_SUBSCRIPTION_ID -and ($Args -notcontains '--subscription') -and ($noSub -notcontains $Args[0])) {
+        $all += @('--subscription', $env:AFS_SUBSCRIPTION_ID)
+        $shown += ' --subscription ' + $env:AFS_SUBSCRIPTION_ID
+    }
 
     Write-AfsLog -Level DEBUG -Message ("run  " + $shown)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()

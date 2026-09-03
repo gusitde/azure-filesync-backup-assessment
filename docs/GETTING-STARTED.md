@@ -182,7 +182,10 @@ Drop each resulting server zip into `servers\<hostname>\` inside the unzipped ex
 
 You get `assessment.md` - a scorecard, findings by severity with evidence and a Microsoft
 reference for each, and a prioritised roadmap - plus `findings.json`, the same data for a deck
-or a tracker.
+or a tracker, and `assessment.html`, the same report as one self-contained page with a tab per
+section (overview, findings with a severity/area filter, roadmap, scope, rules, about). The
+wizard offers to open the HTML report when the assessment finishes, and its *Open the findings
+and as-built reports* option lists every report produced so far.
 
 ---
 
@@ -250,8 +253,10 @@ identity, and Owner or User Access Administrator on the subscription to grant th
 
 No prompts, no browser, no MFA - it signs in as the identity phase 1 created. Always run the
 what-if first; it executes the real preflight checks (CLI version, sign-in, subscription
-access, the dns-resolver extension, storage account name availability) and then shows every
-step without changing anything.
+access, the dns-resolver extension, the five resource providers the build needs -
+`Microsoft.Storage`, `Microsoft.Network`, `Microsoft.StorageSync`,
+`Microsoft.RecoveryServices`, `Microsoft.Insights` - registering any that are not, and storage
+account name availability) and then shows every step without changing anything.
 
 The script is idempotent, so if something fails you fix the cause and run it again rather than
 starting over. When it finishes it prints a verification command for every object it created.
@@ -366,6 +371,11 @@ line are masked before they reach the log.
 | Sync stops right after a network change | The public path was closed before the private endpoint resolved | Re-open it, verify resolution, close it again. See `codex/runbook-file-sync-broken-after-network-lockdown.md` |
 | A backup agent triggers a huge recall | A file-level product walked a tiered File Sync volume | Exclude the server endpoint path. Back up the **share**, never the cache |
 | `Connect-AzAccount -AccessToken` connects but calls return 401 | A raw token context cannot service most Az cmdlets | Use an interactive `Connect-AzAccount`, or a service principal |
+| `ResourceGroupNotFound` in the middle of a build that was finding everything a minute ago | The Azure CLI keeps its default subscription in a profile shared by every window; an `az login` or `az account set` elsewhere retargeted the next call | Nothing - every call is now pinned with `--subscription`. Still, do not sign in from a second window during a build |
+| `-o was unexpected at this time.` | `az.cmd` re-parses arguments; a JMESPath filter with `[?`, `(` or `==` breaks the wrapper | Query plainly (`[].properties.name`) and filter in PowerShell |
+| `MissingSubscriptionRegistration ... namespace 'Microsoft.StorageSync'` | The subscription has never used that service | `az provider register -n <namespace>`; preflight now does this for the five providers the build needs |
+| The private endpoint exists but the name still resolves to a public address | `dns-zone-group show` answered `{}` with exit 0, so no A records were written | Re-run phase 2 - it now attaches the zone group when no zone config exists; verify with `az network private-dns record-set a list` |
+| `az backup vault delete` fails after protection was removed | Soft delete keeps the deleted backup data (14 days by default, irreversible where a policy sets `AlwaysON`) | Wait out the retention; the teardown removes everything else and prints the date |
 
 ---
 
@@ -373,10 +383,14 @@ line are masked before they reach the log.
 
 | Path | What it is |
 |---|---|
+| `start.ps1` | The guided front door: build, assess, remove, prerequisites, docs, codex, resume a build, open reports |
 | `Export-AzFileSyncEnvironment.ps1` | Read-only export of the cloud side |
 | `Get-AfsServerDiagnostics.ps1` | Per-server diagnostic bundle |
-| `Assess-AzFileSyncExport.ps1` | Turns an export into a findings report |
-| `deploy/` | The four inputs, the two phases, and the teardown script |
+| `Assess-AzFileSyncExport.ps1` | Turns an export into `assessment.md`, `findings.json` and the tabbed `assessment.html` |
+| `Render-AfsAssessmentHtml.ps1` | The HTML renderer the assessor and the as-built share (dot-source it) |
+| `deploy/` | The four inputs, the two phases, the teardown script and `Export-AfsAsBuilt.ps1` |
+| `as-built/` | Generated as-built documents (`AS-BUILT-<prefix>-<stamp>.md` + `.html`); not committed - they name real resources |
+| `logs/` | Every run's `.log`, `.jsonl` telemetry and console transcript; not committed |
 | `advise/` | The decision-led design path when there is nothing to assess |
 | `codex/` | Blueprints (target state), playbooks (how to build), runbooks (when it breaks) |
 | `codex/diagrams/` | 97 diagrams, grouped by architecture principle |

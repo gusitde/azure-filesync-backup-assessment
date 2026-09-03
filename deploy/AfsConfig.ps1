@@ -135,6 +135,19 @@ function Get-AzureFailureAdvice {
         }
     }
 
+    # first use of a service in a subscription
+    if ($m -match 'MissingSubscriptionRegistration') {
+        $ns = 'the namespace named in the error'
+        $mm = [regex]::Match($m, "namespace '([^']+)'")
+        if ($mm.Success) { $ns = $mm.Groups[1].Value }
+        return [pscustomobject]@{
+            Cause = "The subscription has never used $ns, so its resource provider is not registered."
+            Why   = 'Azure registers a resource provider the first time a subscription needs it, and a create that arrives before that fails with MissingSubscriptionRegistration. It is a one-time step per subscription and takes a minute or two.'
+            Fix   = @("az provider register -n $ns", "az provider show -n $ns --query registrationState -o tsv   # wait for Registered")
+            Then  = 'Then run this again; the deployment is idempotent and continues where it stopped. The preflight now does this automatically.'
+        }
+    }
+
     if ($m -match 'ResourceGroupNotFound') {
         return [pscustomobject]@{
             Cause = 'The resource group does not exist yet.'

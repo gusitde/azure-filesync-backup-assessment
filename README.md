@@ -30,7 +30,7 @@ Three scripts, one flow:
 |---|---|---|---|---|
 | 1. Export the cloud side | `Export-AzFileSyncEnvironment.ps1` | any workstation with `Az.Accounts` | Reader on the subscriptions | `afs-export-<stamp>.zip` (raw ARM JSON + `summary.md`) |
 | 2. Export the server side (optional, per registered server) | `Get-AfsServerDiagnostics.ps1` | on each Windows Server running the agent, elevated | local admin | `<host>-afs-server-<stamp>.zip` |
-| 3. Assess | `Assess-AzFileSyncExport.ps1` | analyst workstation, no Azure access needed | the zip(s) | `assessment.md` + `findings.json` |
+| 3. Assess | `Assess-AzFileSyncExport.ps1` | analyst workstation, no Azure access needed | the zip(s) | `assessment.md` + `findings.json` + `assessment.html` (tabbed report) |
 
 Everything is **read-only**: only ARM `GET` calls, no `listKeys`, no SAS, no certificates; a
 redaction pass blanks well-known secret field names anyway. The export contains resource
