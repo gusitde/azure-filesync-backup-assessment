@@ -26,6 +26,7 @@ $script:Root      = $PSScriptRoot
 $script:DeployDir = Join-Path $script:Root 'deploy'
 $script:InputsFile = Join-Path $script:DeployDir 'inputs.json'
 $script:ContextFile = Join-Path $script:DeployDir 'deployment-context.json'
+$script:RepoUrl    = 'https://github.com/gusitde/azure-filesync-backup-assessment'
 
 # ------------------------------------------------------------------ ui ------
 
@@ -509,6 +510,140 @@ configuration does not name."
     finally { Pop-Location }
 }
 
+
+function Open-Target {
+    <# Open a document either on GitHub or from disk, whichever the reader prefers. #>
+    param([Parameter(Mandatory)][string]$RelativePath, [string]$Title)
+
+    $label = $RelativePath
+    if ($Title) { $label = $Title }
+    $local = Join-Path $script:Root $RelativePath
+    $url   = ($script:RepoUrl + '/blob/main/' + ($RelativePath -replace '\\', '/'))
+
+    $c = Read-Choice -Question ("Open " + $label + " how?") -Options @(
+        'On GitHub, in the browser',
+        'From disk, in the default editor',
+        'Show the first page here',
+        'Back'
+    )
+    switch ($c) {
+        0 {
+            Write-Note 'if the repository is still private, GitHub will ask you to sign in.'
+            Start-Process $url
+            Write-Good $url
+        }
+        1 {
+            if (Test-Path $local) { Start-Process $local; Write-Good $local }
+            else { Write-Bad ("not found on disk: " + $local) }
+        }
+        2 {
+            if (Test-Path $local) {
+                Write-Host ''
+                Get-Content $local -TotalCount 40 | ForEach-Object { Write-Host ("  " + $_) -ForegroundColor Gray }
+                Write-Host ''
+                Write-Note ("showing the first 40 lines of " + $RelativePath)
+            } else { Write-Bad ("not found on disk: " + $local) }
+        }
+    }
+}
+
+function Invoke-DocsFlow {
+    Write-Title 'Documentation'
+    Write-Explain "What each document is for, so you can go straight to the one you need."
+
+    $docs = @(
+        @{ f = 'docs/GETTING-STARTED.md';         n = 'Getting started';         d = 'Dependencies, sign-in, and a walk-through of every script. Start here.' },
+        @{ f = 'deploy/README.md';                n = 'Two-phase deployment';    d = 'How the four inputs, phase 1 and phase 2 fit together.' },
+        @{ f = 'docs/RULES.md';                   n = 'Assessor rules';          d = 'Every rule the assessment applies, with its recommendation and source.' },
+        @{ f = 'docs/ARCHITECTURE-REFERENCES.md'; n = 'Architecture references'; d = '73 verified Microsoft sources, each with a specific take-away.' },
+        @{ f = 'docs/VALIDATION.md';              n = 'Validation record';       d = 'What has been executed, what has not, and what execution found.' },
+        @{ f = 'docs/PROOF-OF-WORK.md';           n = 'Proof of work';           d = 'What was built and what verification caught. For sharing.' },
+        @{ f = 'docs/AS-BUILT-TEMPLATE.md';       n = 'As-built template';       d = 'Fill in after a deployment. Names the evidence and screenshots to capture.' },
+        @{ f = 'docs/PLAYBOOK-azure-file-sync-assessment.md';   n = 'Playbook: assessment'; d = 'Scope, export, assess and recommend on an existing estate.' },
+        @{ f = 'docs/PLAYBOOK-azure-backup-for-azure-files.md'; n = 'Playbook: backup';     d = 'Design and set up Azure Backup for the synced shares.' },
+        @{ f = 'advise/SESSION-GUIDE.md';         n = 'Customer session guide';  d = 'A two-hour working session when there is nothing to assess yet.' },
+        @{ f = 'advise/REFERENCE-DESIGN.md';      n = 'Reference design';        d = '18 decisions, each with a default, a reason and a reversal cost.' },
+        @{ f = 'CONTRIBUTING.md';                 n = 'Contributing';            d = 'How to report a correction or a gap. No write access needed.' }
+    )
+
+    while ($true) {
+        Write-Host ''
+        $labels = @()
+        foreach ($d in $docs) {
+            $mark = ' '
+            if (-not (Test-Path (Join-Path $script:Root $d.f))) { $mark = '?' }
+            $labels += ("{0} {1}" -f $mark, $d.n) + "`n         " + $d.d
+        }
+        $labels += 'Open the whole docs folder on GitHub'
+        $labels += 'Back'
+
+        $c = Read-Choice -Question 'Which document?' -Options $labels
+        if ($c -eq $docs.Count) {
+            Write-Note 'if the repository is still private, GitHub will ask you to sign in.'
+            Start-Process ($script:RepoUrl + '/tree/main/docs')
+            Write-Good ($script:RepoUrl + '/tree/main/docs')
+            continue
+        }
+        if ($c -eq ($docs.Count + 1)) { return }
+        Open-Target -RelativePath $docs[$c].f -Title $docs[$c].n
+    }
+}
+
+function Invoke-CodexFlow {
+    Write-Title 'Blueprints, playbooks and runbooks'
+    Write-Explain "Three kinds of document, separated on purpose:
+  blueprint - what the target state looks like and why, including the
+              decisions that cannot be reversed
+  playbook  - the ordered steps to build it, each carrying a verify as
+              well as a run
+  runbook   - symptom, cause, recovery, for when it breaks later"
+
+    $codexDir = Join-Path $script:Root 'codex'
+    if (-not (Test-Path $codexDir)) { Write-Bad 'no codex folder found.'; return }
+
+    # read the title out of each entry rather than hard-coding a list that would drift
+    $entries = @()
+    $files = Get-ChildItem -Path $codexDir -Filter '*.md' | Where-Object { $_.Name -ne 'README.md' } | Sort-Object Name
+    foreach ($file in $files) {
+        $head  = Get-Content $file.FullName -TotalCount 12
+        $title = ($head | Where-Object { $_ -match '^title:' } | Select-Object -First 1) -replace '^title:\s*', ''
+        $type  = ($head | Where-Object { $_ -match '^doc_type:' } | Select-Object -First 1) -replace '^doc_type:\s*', ''
+        if (-not $title) { $title = $file.BaseName }
+        if (-not $type)  { $type = 'entry' }
+        $entries += @{ file = ('codex/' + $file.Name); type = $type; title = $title }
+    }
+
+    while ($true) {
+        $order  = @('blueprint', 'playbook', 'runbook')
+        $sorted = @()
+        foreach ($t in $order) { $sorted += @($entries | Where-Object { $_.type -eq $t }) }
+        $sorted += @($entries | Where-Object { $order -notcontains $_.type })
+
+        $nb = (@($entries | Where-Object { $_.type -eq 'blueprint' })).Count
+        $np = (@($entries | Where-Object { $_.type -eq 'playbook' })).Count
+        $nr = (@($entries | Where-Object { $_.type -eq 'runbook' })).Count
+
+        Write-Host ''
+        Write-Explain ("{0} entries: {1} blueprints, {2} playbooks, {3} runbooks, plus the diagram library." -f $entries.Count, $nb, $np, $nr)
+
+        $labels = @()
+        foreach ($e in $sorted) { $labels += ("[{0,-9}] {1}" -f $e.type, $e.title) }
+        $labels += 'Open the codex folder on GitHub'
+        $labels += 'Open the diagram library on GitHub'
+        $labels += 'Back'
+
+        $c = Read-Choice -Question 'Which one?' -Options $labels
+        if ($c -eq $sorted.Count) {
+            Start-Process ($script:RepoUrl + '/tree/main/codex'); Write-Good ($script:RepoUrl + '/tree/main/codex'); continue
+        }
+        if ($c -eq ($sorted.Count + 1)) {
+            Start-Process ($script:RepoUrl + '/tree/main/codex/diagrams'); Write-Good ($script:RepoUrl + '/tree/main/codex/diagrams'); continue
+        }
+        if ($c -eq ($sorted.Count + 2)) { return }
+        Open-Target -RelativePath $sorted[$c].file -Title $sorted[$c].title
+    }
+}
+
 # ------------------------------------------------------------------ main ----
 
 Write-Banner
@@ -519,10 +654,12 @@ without showing you first and asking."
 while ($true) {
     try {
         $c = Read-Choice -Question 'What would you like to do?' -Options @(
-        'Build a new Azure File Sync environment',
-        'Assess an existing environment',
-        'Remove an environment I built',
-        'Just check my prerequisites',
+            'Build a new Azure File Sync environment',
+            'Assess an existing environment',
+            'Remove an environment I built',
+            'Just check my prerequisites',
+            'Read the documentation',
+            'Browse the blueprints, playbooks and runbooks',
             'Quit'
         )
     } catch {
@@ -536,7 +673,9 @@ while ($true) {
             1 { Invoke-AssessFlow }
             2 { Invoke-RemoveFlow }
             3 { [void](Test-Prerequisites -ForDeploy) }
-            4 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; return }
+            4 { Invoke-DocsFlow }
+            5 { Invoke-CodexFlow }
+            6 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; return }
         }
     } catch {
         Write-Host ''
