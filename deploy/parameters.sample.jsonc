@@ -1,0 +1,141 @@
+// ---------------------------------------------------------------------------
+// Azure File Sync + Azure Files private-endpoint deployment - parameter file
+//
+// Copy this file to parameters.json, change the values, run:
+//
+//     .\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json -WhatIf
+//     .\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json
+//
+// Everything the deployment creates is derived from this file. There is nothing
+// else to edit and no values are hard-coded in the script.
+//
+// Comments are allowed (this is JSONC); the script strips them before parsing.
+// ---------------------------------------------------------------------------
+{
+  // -- Where -----------------------------------------------------------------
+  "subscriptionId": "00000000-0000-0000-0000-000000000000",
+  "location": "eastus",
+  "resourceGroup": "rg-filesync-demo",
+
+  // Applied to every resource the script creates, so a demo is easy to find
+  // and easy to remove.
+  "tags": {
+    "purpose": "azure-file-sync-demo",
+    "owner": "change-me",
+    "disposable": "true"
+  },
+
+  // -- Naming ----------------------------------------------------------------
+  // Storage account names must be 3-24 characters, lowercase letters and digits
+  // only, and globally unique. The script fails early with a clear message if
+  // the name is taken rather than part way through the build.
+  "storageAccountName": "stfilesyncdemo001",
+
+  // Standard_LRS | Standard_ZRS | Standard_GRS
+  // ZRS is the usual choice when the backup is the recovery point.
+  // NOTE: redundancy cannot be changed later without a data migration.
+  "storageSku": "Standard_ZRS",
+
+  "storageSyncServiceName": "sss-filesync-demo",
+  "syncGroupName": "sg-dept-shares",
+
+  // -- The file shares to create --------------------------------------------
+  // One entry per Azure file share. quotaGiB is the maximum size of the share.
+  "shares": [
+    { "name": "dept-shares", "quotaGiB": 1024 },
+    { "name": "home-drives", "quotaGiB": 2048 }
+  ],
+
+  // -- Network ---------------------------------------------------------------
+  // Set createVNet false and supply existingVNet/existingSubnet to deploy the
+  // private endpoints into a network you already have (the usual case in a
+  // real environment, where the hub and spokes already exist).
+  "network": {
+    "createVNet": true,
+    "vnetName": "vnet-filesync-demo",
+    "vnetAddressPrefix": "10.60.0.0/16",
+
+    // The subnet that will hold the private endpoints.
+    "privateEndpointSubnetName": "snet-privateendpoints",
+    "privateEndpointSubnetPrefix": "10.60.1.0/26",
+
+    // Only used when createVNet is false.
+    "existingVNetResourceGroup": "",
+    "existingVNetName": "",
+    "existingSubnetName": ""
+  },
+
+  // -- Private Link ----------------------------------------------------------
+  // Creates a private endpoint for the storage account (sub-resource "file")
+  // and, when enabled, one for the Storage Sync Service (sub-resource "Afs").
+  "privateLink": {
+    "enableStorageFilePrivateEndpoint": true,
+    "enableFileSyncPrivateEndpoint": true,
+
+    // Create and link the privatelink DNS zones. Set false when the zones are
+    // already centrally managed elsewhere - the script will then only create
+    // the DNS zone group pointing at your existing zones.
+    "createPrivateDnsZones": true,
+    "existingPrivateDnsZoneResourceGroup": "",
+
+    // Lock the public paths at the end of the run. Leave false for a first
+    // deployment, verify private resolution works, then re-run with true.
+    // Turning these on before a private endpoint resolves will break sync.
+    "disableStoragePublicAccess": false,
+    "restrictFileSyncToVirtualNetworksOnly": false
+  },
+
+  // -- Azure DNS Private Resolver -------------------------------------------
+  // The bridge that lets on-premises DNS resolve Azure private names.
+  // The inbound endpoint needs its own delegated subnet, minimum /28.
+  "dnsResolver": {
+    "enabled": true,
+    "name": "dnspr-filesync-demo",
+    "inboundSubnetName": "snet-dnsresolver-inbound",
+    "inboundSubnetPrefix": "10.60.2.0/28",
+
+    // Optional: an outbound endpoint plus a forwarding ruleset, so Azure can
+    // resolve your on-premises names. Only needed when Azure-hosted servers
+    // must resolve on-premises records.
+    "createOutboundEndpoint": false,
+    "outboundSubnetName": "snet-dnsresolver-outbound",
+    "outboundSubnetPrefix": "10.60.2.16/28",
+    "forwardingRulesetName": "dnsfrs-filesync-demo",
+    "forwardingRules": [
+      // { "domain": "corp.example.com.", "targetDnsServers": ["10.10.0.10", "10.10.0.11"] }
+    ]
+  },
+
+  // -- Azure Backup ----------------------------------------------------------
+  // Redundancy and cross-region restore are set BEFORE any item is protected,
+  // because they cannot be changed afterwards.
+  "backup": {
+    "enabled": true,
+    "vaultName": "rsv-filesync-demo",
+
+    // LocallyRedundant | ZoneRedundant | GeoRedundant
+    "storageRedundancy": "GeoRedundant",
+    "enableCrossRegionRestore": true,
+
+    // Daily retention in days. Item-level (single file) restore comes from the
+    // snapshot tier, so this is the value that governs the "restore one file"
+    // scenario. Maximum 200 for a daily snapshot schedule.
+    "policyName": "afs-daily-60d",
+    "dailyRetentionDays": 60,
+    "backupTimeLocal": "22:00",
+    "timeZone": "Pacific Standard Time",
+
+    // Protect the shares listed above as soon as the vault exists.
+    "protectShares": true
+  },
+
+  // -- Identity --------------------------------------------------------------
+  // AD DS domain join of the storage account. Left disabled by default because
+  // it requires directory permissions and is usually run separately, from a
+  // domain-joined machine, using the AzFilesHybrid module.
+  "identity": {
+    "enableAdDsAuthentication": false,
+    "domainAccountType": "ComputerAccount",   // ComputerAccount | ServiceLogonAccount
+    "organizationalUnitDistinguishedName": ""
+  }
+}

@@ -152,13 +152,19 @@ as errors, and all 62 were corrected. The codex validator reports 20/20 entries 
 pinned module number should be re-verified before being quoted to a customer more than a
 quarter from now.
 
-**What "verified" means here, precisely.** Commands and constraints are checked against
-Microsoft's published documentation. They are **not yet execution-tested** against a live
-subscription. That distinction is deliberate and stated rather than glossed: a documented
-parameter can still be wrong for your API version, your region or your resource state. Treat
-every mutating command as something to rehearse in a scratch resource group before running it
-somewhere that matters, and tell us when one does not behave as written - see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+**What "verified" means here, precisely** - see [docs/VALIDATION.md](docs/VALIDATION.md) for
+the full record. In short: every `az` command in the library has had its command path and
+every flag resolved against a real CLI (89 of 89 valid); the read-only gate and verify
+commands have been executed against live Azure resources; all 23 ARM API versions the
+exporter uses return 200 against live ARM; and the deployment scripts run end to end in
+what-if mode. **Mutating commands have not been executed** - the test tenant requires MFA for
+every write - so treat `create`, `update` and `delete` steps as rehearsal-first, in a scratch
+resource group, before running them anywhere that matters.
+
+Execution found five defects that documentation review had missed, including a backup gate
+rule that returned nothing while exiting 0, and Git Bash silently corrupting Azure resource
+IDs. They are listed in the validation record. If a command does not behave as written for
+you, that is worth reporting - see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Contributing
 
