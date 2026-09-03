@@ -284,7 +284,34 @@ file and re-run phase 2:
 Closing the public path before the private endpoint resolves is the most common way to break
 sync, which is why it is not the default.
 
-### Step 5 - the three things the script does not do
+### Step 5 - the three things that happen on your own machines
+
+Each has a script under `onprem/`, and the wizard offers all three under
+*Connect your on-premises servers*. Each one runs a dry run first, is idempotent, and has a
+reverse path.
+
+```powershell
+# 1. the file server: install the agent, register it, sync a folder to a share
+.\onprem\Install-AfsServerEndpoint.ps1 -Context ..\deploy\deployment-context.json `
+    -FileServer fs01 -SharePath 'dept-shares=D:\Shares\dept'
+
+# 2. on-premises DNS: forward the PUBLIC zones to the resolver
+#    (file.core.windows.net and afs.azure.net - a forwarder on the privatelink zone is
+#     never consulted, because the whole CNAME chain comes back in one answer)
+.\onprem\Set-AfsDnsForwarders.ps1 -Context ..\deploy\deployment-context.json -DnsServer dc01,dc02
+
+# 3. Active Directory: domain-join the storage account
+.\onprem\Join-AfsStorageAccountToAdDs.ps1 -Context ..\deploy\deployment-context.json `
+    -OrganizationalUnit 'OU=AzureFiles,DC=corp,DC=contoso,DC=com'
+```
+
+Two things worth knowing before you run them. The DNS one has the widest blast radius of
+anything in this kit: once the public zone is forwarded, every query for it goes to the
+resolver, so the script refuses to write unless the resolver actually answers with a private
+address. And the AD DS join needs the RSAT Active Directory module on the machine you run it
+from - installing that is the one step that needs local administrator, once.
+
+### What each of them still leaves to you
 
 These need a human on a specific machine.
 
@@ -389,6 +416,7 @@ line are masked before they reach the log.
 | `Assess-AzFileSyncExport.ps1` | Turns an export into `assessment.md`, `findings.json` and the tabbed `assessment.html` |
 | `Render-AfsAssessmentHtml.ps1` | The HTML renderer the assessor and the as-built share (dot-source it) |
 | `deploy/` | The four inputs, the two phases, the teardown script and `Export-AfsAsBuilt.ps1` |
+| `onprem/` | The three steps that run against your own machines: the File Sync agent and server endpoint, the DNS forwarders, and the AD DS join |
 | `as-built/` | Generated as-built documents (`AS-BUILT-<prefix>-<stamp>.md` + `.html`); not committed - they name real resources |
 | `logs/` | Every run's `.log`, `.jsonl` telemetry and console transcript; not committed |
 | `advise/` | The decision-led design path when there is nothing to assess |

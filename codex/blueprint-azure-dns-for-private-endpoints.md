@@ -131,38 +131,67 @@ flowchart TB
    resolver does not support ExpressRoute FastPath and must live in the same region as its VNet.
    Contoso DNS servers must reach the inbound IP on UDP and TCP 53 across ExpressRoute -
    check the NSG on the inbound subnet and the on-premises firewall before blaming DNS.
-3. **On-premises conditional forwarders (product-neutral).** On Contoso authoritative
-   resolvers, create one **forward-only** conditional forwarder per privatelink zone above,
-   target = the inbound endpoint IP (add the second inbound endpoint IP when a second resolver
-   exists). Public names keep resolving through the normal recursion of the estate, which
-   returns the `privatelink` CNAME that the forwarder then answers. The design is identical on
-   any product; only the syntax differs:
+3. **On-premises conditional forwarders (product-neutral). Forward the PUBLIC zone, not the
+   privatelink zone.** Target = the inbound endpoint IP (add the second inbound endpoint IP
+   when a second resolver exists). So: `file.core.windows.net`, `afs.azure.net`,
+   `blob.core.windows.net` - the "Public DNS zone forwarders" column of the Microsoft private
+   endpoint DNS table, not the private zone names.
+
+   **Corrected 2026-09-03.** Earlier revisions of this blueprint said to forward the
+   `privatelink.*` zones, on the reasoning that public names resolve normally and the resulting
+   `privatelink` CNAME is then answered by the forwarder. That reasoning only holds for a
+   resolver doing its own iterative resolution from root hints. A resolver that forwards to an
+   upstream server - which is the common case, and the case on most estates - receives the
+   whole chain (public name, CNAME to privatelink, address) in a single answer and never issues
+   a separate query for the privatelink name. The forwarder is created, looks right, and is
+   never consulted. Microsoft states the rule directly: *"The conditional forwarding must be
+   made to the recommended public DNS zone forwarder. For example: database.windows.net instead
+   of privatelink.database.windows.net."*
+
+   Forwarding the whole `core.windows.net` also works and is what the Azure Files runbook
+   shows, but it captures blob, queue, table, dfs and web as well, and breaks access to storage
+   accounts in **other tenants** that have private endpoints. Prefer the narrower service zone.
+
+   **Before creating any of these, prove the resolver answers with a private address**
+   (`Resolve-DnsName <account>.privatelink.file.core.windows.net -Server <inbound IP>`). Once
+   the public zone is forwarded, every query for it goes to the resolver: an unreachable
+   resolver means SERVFAIL for every storage endpoint under that suffix, and a resolver that
+   answers REFUSED or NXDOMAIN - which is what happens when the private zone is not linked to
+   its virtual network - has that answer passed straight back to the client with no fallback.
+   Set the forwarder timeout to 2-3 seconds so the documented fallback to recursion is
+   reachable inside the server's own recursion budget, and leave recursion enabled.
+
+   The design is identical on any product; only the syntax differs:
 
    - **Infoblox** (what Contoso runs today): Data Management > DNS > Zones > Add > Forward
-     Zone, one per privatelink zone, forwarder = the inbound IP, with **Use Forwarders Only**
-     ticked so the grid never falls back to recursion for that zone. The same object over WAPI
-     is `zone_forward`, with `fqdn` and `forward_to`.
+     Zone, one per public zone, forwarder = the inbound IP. Leave **Use Forwarders Only**
+     unticked unless the namespace must never resolve publicly - ticking it removes the
+     fallback. The same object over WAPI is `zone_forward`: `fqdn` is the only required field,
+     each `forward_to` entry needs both `address` and `name`, and a zone with no
+     `forwarding_servers` or `ns_group` is accepted by the API but never written into
+     `named.conf`, so it silently does nothing.
    - **Windows Server DNS** (DnsServer PowerShell module; run per zone on a DNS server, or once
      with `-ReplicationScope Forest` so it replicates to every DC in the forest):
 
      ```powershell
-     Add-DnsServerConditionalForwarderZone -Name "privatelink.file.core.windows.net" `
-       -MasterServers 10.100.20.4 -ReplicationScope "Forest" -PassThru
-     Set-DnsServerConditionalForwarderZone -Name "privatelink.file.core.windows.net" `
-       -UseRecursion $false
+     Add-DnsServerConditionalForwarderZone -Name "file.core.windows.net" `
+       -MasterServers 10.100.20.4 -ReplicationScope "Forest" -ForwarderTimeout 3 -PassThru
      ```
 
-     `-UseRecursion $false` is the forward-only setting (Set-, not Add-). The legacy `dnscmd`
+     Do NOT set `-UseRecursion $false` here: it removes the only fallback the server has when
+     the resolver stops answering. Note also that there is no
+     `Remove-DnsServerConditionalForwarderZone` - removal is `Remove-DnsServerZone -Force`.
+     The legacy `dnscmd`
      equivalent, still valid but deprecated in favour of the module, is
-     `dnscmd . /zoneadd privatelink.file.core.windows.net /dsforwarder 10.100.20.4 /slave /dp /forest`
+     `dnscmd . /zoneadd file.core.windows.net /dsforwarder 10.100.20.4 /dp /forest`
      - use `/forwarder` instead of `/dsforwarder` for a file-backed zone on a single server, and
      note that `/slave` is what makes it forward-only. Verify with
-     `Get-DnsServerZone -Name "privatelink.file.core.windows.net"`: `ZoneType` is `Forwarder`
+     `Get-DnsServerZone -Name "file.core.windows.net"`: `ZoneType` is `Forwarder`
      and `MasterServers` is the inbound IP.
    - **BIND** (`named.conf`), one stanza per zone:
 
      ```text
-     zone "privatelink.file.core.windows.net" IN {
+     zone "file.core.windows.net" IN {
          type forward;
          forward only;
          forwarders { 10.100.20.4; };

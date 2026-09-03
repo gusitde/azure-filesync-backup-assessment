@@ -1,6 +1,6 @@
 # Codex library - Azure Files with private endpoints, secure storage accounts, hybrid DNS, File Sync, Migrate and Backup (Contoso profile)
 
-Twenty codex entries (blueprints, playbooks, runbooks) plus 97 mermaid diagrams grouped by
+Twenty-two codex entries (blueprints, playbooks, runbooks) plus 97 mermaid diagrams grouped by
 architecture principle, written in the Luca codex format (`_MANIFEST.md` v1: 17 front-matter keys, the
 six-section body frame, executable `## Steps`, fenced gate rules, anchored references) so they
 can be imported into a codex (`blueprint.blueprints`) with `import-to-luca.mjs` and still be read
@@ -24,6 +24,8 @@ registry or the Azure Policy built-ins on 2026-09-03; each entry lists its sourc
 | `playbook-deploy-dns-private-resolver-and-forwarders` | playbook | Bicep (AVM dns-resolver 0.5.8, dns-forwarding-ruleset 0.5.4, private-dns-zone 0.8.1) + Infoblox forwarders |
 | `playbook-enable-file-sync-private-endpoint-and-cutover` | playbook | Storage Sync Service private endpoint, managed identity, AllowVirtualNetworksOnly with gates and rollback |
 | `playbook-enable-identity-based-auth-ad-ds` | playbook | AzFilesHybrid AD DS join (AES-256), share-level RBAC, Kerberos-only SMB |
+| `playbook-install-file-sync-agent-and-server-endpoint` | playbook | Agent install, server registration, sync group, cloud endpoint and server endpoint - and the identity split the cloud endpoint forces |
+| `playbook-point-on-premises-dns-at-the-private-resolver` | playbook | The on-premises conditional forwarders: which zone to forward and why, the gate that refuses a resolver that is not answering, and the reverse path |
 | `playbook-azure-migrate-private-link-cache-storage` | playbook | Cache storage account + blob endpoint + vault identity + appliance DNS verification |
 | `playbook-enable-azure-backup-for-file-shares` | playbook | Vault (GRS + CRR first), policies with vault tier, protect every share, alert and restore tests |
 | `playbook-protect-a-migration-wave-with-azure-backup` | playbook | Enhanced VM policy, protect every VM in the wave, first backups, the File Sync agent check, and the evidence that closes the wave gate |
@@ -71,7 +73,7 @@ The key design facts Contoso asked about:
 - **Azure Migrate**: project, Key Vault, usage storage and vault endpoints are created by Azure;
   the cache storage account and its blob/queue endpoints are Contoso's; the appliance must
   resolve every name in "Download DNS settings" through Infoblox forwarders.
-- **DNS**: forward the `privatelink.*` zones (not the whole `core.windows.net`) from Infoblox to
+- **DNS**: forward the PUBLIC service zones - `file.core.windows.net`, `afs.azure.net` - from Infoblox to
   the Private Resolver inbound endpoint; use the outbound endpoint + ruleset for `contoso.local`
   from Azure.
 

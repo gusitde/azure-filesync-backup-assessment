@@ -69,7 +69,9 @@ function ConvertTo-Array {
         array. That silently turned a 2-resource inventory into "1 resource". Normalise
         here instead: null becomes empty, a scalar becomes one element, an array stays. #>
     param($Value)
-    if ($null -eq $Value) { return @() }
+    # ,@() and not @(): an empty array returned bare goes through the pipeline as NOTHING,
+    # so the caller gets $null and .Count throws under Set-StrictMode
+    if ($null -eq $Value) { return ,@() }
     # the unary comma matters: 'return $array' goes through the pipeline, which unwraps a
     # ONE-element array back to its scalar, and a PSCustomObject has no .Count - the as-built
     # reported the deployment identity's single role as 'not readable' because of exactly that

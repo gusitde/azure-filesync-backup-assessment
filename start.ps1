@@ -157,7 +157,9 @@ function ConvertTo-Array {
         turned a six-subscription menu into one entry with every name concatenated. Normalise
         here instead. #>
     param($Value)
-    if ($null -eq $Value) { return @() }
+    # ,@() and not @(): an empty array returned bare goes through the pipeline as NOTHING,
+    # so the caller gets $null and .Count throws under Set-StrictMode
+    if ($null -eq $Value) { return ,@() }
     # the unary comma matters: 'return $array' goes through the pipeline, which unwraps a
     # ONE-element array back to its scalar, and a PSCustomObject has no .Count - the as-built
     # reported the deployment identity's single role as 'not readable' because of exactly that
@@ -425,6 +427,76 @@ something first (sign in again, register a provider), do it now, then answer yes
         Write-Title ("Phase 2 - retry " + ($attempt + 1))
     }
     return $false
+}
+
+function Invoke-OnPremisesFlow {
+    <# The three steps the Azure build deliberately does not do, because each one changes a
+       machine you own rather than a subscription. Each has its own script under onprem/, and
+       each one is offered as a dry run first. #>
+    $script:OnPremDir = Join-Path $script:Root 'onprem'
+    while ($true) {
+        Write-Title 'Connect your on-premises servers'
+        Write-Explain "The build stops at the edge of Azure. These three finish the job, and each
+one changes a machine of yours - a file server, a DNS server, Active
+Directory - so each asks before it does anything."
+        if (-not (Test-Path $script:ContextFile)) {
+            Write-Bad 'no deployment context found - build the Azure side first (option 1).'
+            return
+        }
+        $c = Read-Choice -Question 'Which one?' -Options @(
+            'Install the File Sync agent and sync a folder to a share',
+            'Point on-premises DNS at the Azure resolver',
+            'Domain-join the storage account to Active Directory',
+            'Back'
+        )
+        if ($c -eq 3) { return }
+        $acct = Ensure-SignedIn
+        if (-not $acct) { return }
+
+        Push-Location $script:OnPremDir
+        try {
+            switch ($c) {
+                0 {
+                    $server = Read-Answer -Question 'Which file server?' -Why 'A name this machine can reach over PowerShell remoting.' -Pattern '^[A-Za-z0-9._-]+$' -PatternHelp 'a computer name, for example fs01 or fs01.corp.example.com'
+                    $ctx = Read-AfsJsonc -Path $script:ContextFile
+                    $shares = @(ConvertTo-Array $ctx.config.shares | ForEach-Object { $_.name })
+                    $maps = @()
+                    foreach ($sh in $shares) {
+                        $ans = Read-Answer -Question ("Which folder on $server syncs to the share '" + $sh + "'?") -Why 'A local NTFS path. Leave empty to skip this share.' -AllowEmpty
+                        if ($ans) { $maps += ($sh + '=' + $ans) }
+                    }
+                    if ($maps.Count -eq 0) { Write-Note 'no folders given - nothing to do.'; break }
+                    Write-Explain 'A dry run first, as always.'
+                    & (Join-Path $script:OnPremDir 'Install-AfsServerEndpoint.ps1') -Context $script:ContextFile -FileServer $server -SharePath $maps -WhatIf
+                    if (Read-YesNo -Question 'Do it for real?' -DefaultYes $false) {
+                        & (Join-Path $script:OnPremDir 'Install-AfsServerEndpoint.ps1') -Context $script:ContextFile -FileServer $server -SharePath $maps -Confirm:$false
+                    }
+                }
+                1 {
+                    Write-Explain "This one has the widest blast radius of the three: it changes how EVERY
+client on your network resolves Azure storage names. The script proves the
+resolver answers with a private address before it writes anything, and
+refuses if it does not."
+                    $servers = Read-Answer -Question 'Which DNS servers?' -Why 'Comma-separated. Name every resolver your clients use, not only the domain controllers.' -Pattern '^[A-Za-z0-9._,\s-]+$' -PatternHelp 'one or more computer names separated by commas'
+                    & (Join-Path $script:OnPremDir 'Set-AfsDnsForwarders.ps1') -Context $script:ContextFile -DnsServer $servers -WhatIf
+                    if (Read-YesNo -Question 'Do it for real?' -DefaultYes $false) {
+                        & (Join-Path $script:OnPremDir 'Set-AfsDnsForwarders.ps1') -Context $script:ContextFile -DnsServer $servers -Confirm:$false
+                    }
+                }
+                2 {
+                    $ctx = Read-AfsJsonc -Path $script:ContextFile
+                    $ou = Read-Answer -Question 'Which organizational unit should the storage account live in?' -Why 'A distinguished name. Give one: without it the object lands wherever this machine sits.' -Default ([string](Get-AfsProp $ctx.config 'adOuDn' ''))
+                    & (Join-Path $script:OnPremDir 'Join-AfsStorageAccountToAdDs.ps1') -Context $script:ContextFile -OrganizationalUnit $ou -WhatIf
+                    if (Read-YesNo -Question 'Do it for real?' -DefaultYes $false) {
+                        & (Join-Path $script:OnPremDir 'Join-AfsStorageAccountToAdDs.ps1') -Context $script:ContextFile -OrganizationalUnit $ou -Confirm:$false
+                    }
+                }
+            }
+        } catch {
+            Write-AfsLogException -ErrorRecord $_ -Context 'on-premises step failed'
+            Show-AzureFailure -Message $_.Exception.Message -Context 'That step did not complete.'
+        } finally { Pop-Location }
+    }
 }
 
 function Invoke-ResumeFlow {
@@ -907,6 +979,7 @@ while ($true) {
             'Just check my prerequisites',
             'Read the documentation',
             'Browse the blueprints, playbooks and runbooks',
+            'Connect your on-premises servers (agent, DNS, AD join)',
             'Resume the last build (retry after a crash)',
             'Open the findings and as-built reports',
             'Quit'
@@ -924,9 +997,10 @@ while ($true) {
             3 { [void](Test-Prerequisites -ForDeploy) }
             4 { Invoke-DocsFlow }
             5 { Invoke-CodexFlow }
-            6 { Invoke-ResumeFlow }
-            7 { Invoke-ReportsFlow }
-            8 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
+            6 { Invoke-OnPremisesFlow }
+            7 { Invoke-ResumeFlow }
+            8 { Invoke-ReportsFlow }
+            9 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
         }
     } catch {
         Write-AfsLogException -ErrorRecord $_ -Context 'flow failed'

@@ -103,7 +103,9 @@ function ConvertTo-Array {
         array. That silently turned a 2-resource inventory into "1 resource". Normalise
         here instead: null becomes empty, a scalar becomes one element, an array stays. #>
     param($Value)
-    if ($null -eq $Value) { return @() }
+    # ,@() and not @(): an empty array returned bare goes through the pipeline as NOTHING,
+    # so the caller gets $null and .Count throws under Set-StrictMode
+    if ($null -eq $Value) { return ,@() }
     # the unary comma matters: 'return $array' goes through the pipeline, which unwraps a
     # ONE-element array back to its scalar, and a PSCustomObject has no .Count - the as-built
     # reported the deployment identity's single role as 'not readable' because of exactly that
@@ -712,13 +714,17 @@ foreach ($v in $script:Verifications) {
 }
 
 Write-Host ''
-Write-Host 'Next steps that are deliberately NOT automated:' -ForegroundColor White
-Write-Host '  1. Install the Azure File Sync agent on the file server and register it'
-Write-Host '     against the Storage Sync Service, then create the server endpoint.'
-Write-Host '  2. Point the on-premises DNS conditional forwarders at the resolver inbound IP'
-Write-Host '     shown above, for the privatelink zones only.'
-Write-Host '  3. Domain-join the storage account with AzFilesHybrid if AD DS authentication'
-Write-Host '     is required, from a domain-joined machine.'
+Write-Host 'Three steps remain, each on a machine of yours rather than in Azure.' -ForegroundColor White
+Write-Host 'There is a script for each, under onprem\ - or use option 7 in start.ps1:'
+Write-Host ''
+Write-Host '  1. Install the Azure File Sync agent, register the server, and sync a folder:'
+Write-Host ("     .\onprem\Install-AfsServerEndpoint.ps1 -Context " + $Context + " -FileServer <server> -SharePath '<share>=<path>'")
+Write-Host '  2. Point on-premises DNS at the resolver. Forward the PUBLIC zones -'
+Write-Host '     file.core.windows.net and afs.azure.net - not the privatelink ones, which'
+Write-Host '     are never consulted. The script proves the resolver answers privately first:'
+Write-Host ("     .\onprem\Set-AfsDnsForwarders.ps1 -Context " + $Context + " -DnsServer <dns servers>")
+Write-Host '  3. Domain-join the storage account for AD DS authentication:'
+Write-Host ("     .\onprem\Join-AfsStorageAccountToAdDs.ps1 -Context " + $Context + " -OrganizationalUnit '<OU DN>'")
 Write-Host ''
 $removeArg = if ($PSCmdlet.ParameterSetName -eq 'Context') { "-Context $Context" } else { "-InputFile $InputFile" }
 Write-Host ('Remove everything with: .\Remove-AfsEnvironment.ps1 ' + $removeArg)

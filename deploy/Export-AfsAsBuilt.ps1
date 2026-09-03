@@ -51,7 +51,9 @@ if (-not $env:AFS_LOG_FILE) { Start-AfsLog -Level Verbose -Name 'asbuilt' | Out-
 function ConvertTo-Array {
     # @(Q ...) does not flatten a returned Object[]; normalise here (same helper as Deploy).
     param($Value)
-    if ($null -eq $Value) { return @() }
+    # ,@() and not @(): an empty array returned bare goes through the pipeline as NOTHING,
+    # so the caller gets $null and .Count throws under Set-StrictMode
+    if ($null -eq $Value) { return ,@() }
     # the unary comma matters: 'return $array' goes through the pipeline, which unwraps a
     # ONE-element array back to its scalar, and a PSCustomObject has no .Count - the as-built
     # reported the deployment identity's single role as 'not readable' because of exactly that
@@ -293,13 +295,14 @@ L ''
 # ----------------------------------------------------------- still manual ---
 L '## Still manual'
 L ''
-L 'Three steps need a person on a specific machine, and this document is not complete until they are recorded here:'
+L 'Three steps happen on a machine of yours rather than in Azure. Each has a script under'
+L '`onprem/`, and each is offered by option 7 of `start.ps1`. Record who ran it and when:'
 L ''
-L '| Step | Where | Status | Done by | Date |'
-L '|---|---|---|---|---|'
-L '| Install the Azure File Sync agent, register the server, create the server endpoint | the file server | pending | | |'
-L "| On-premises conditional forwarders for the two privatelink zones -> $(if ($inbound) { $inbound.ipConfigurations[0].privateIpAddress } else { 'resolver inbound IP' }) | the DNS platform | pending | | |"
-L '| AD DS domain join of the storage account (AzFilesHybrid) | a domain-joined machine | pending | | |'
+L '| Step | Where | Script | Status | Done by | Date |'
+L '|---|---|---|---|---|---|'
+L '| Install the File Sync agent, register the server, create the server endpoint | the file server | `onprem/Install-AfsServerEndpoint.ps1` | pending | | |'
+L "| Forward the PUBLIC zones (``file.core.windows.net``, ``afs.azure.net`` - not the privatelink ones) to $(if ($inbound) { $inbound.ipConfigurations[0].privateIpAddress } else { 'the resolver inbound address' }) | the DNS platform | ``onprem/Set-AfsDnsForwarders.ps1`` | pending | | |"
+L '| AD DS domain join of the storage account | a domain-joined machine | `onprem/Join-AfsStorageAccountToAdDs.ps1` | pending | | |'
 L ''
 
 # ------------------------------------------------------------------ write ---

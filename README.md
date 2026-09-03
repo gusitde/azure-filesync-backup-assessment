@@ -61,6 +61,24 @@ Optionally, on each registered file server (elevated PowerShell):
 .\Get-AfsServerDiagnostics.ps1 -OutputPath C:\temp      # add -SampleTieredFiles for a tiered-file census
 ```
 
+## Connecting your own servers
+
+The build stops at the edge of Azure. Three steps happen on machines you own, and each has a
+script under [onprem/](onprem/) - offered together by `start.ps1` under *Connect your
+on-premises servers*:
+
+| Step | Script | Runs against |
+|---|---|---|
+| Install the File Sync agent, register the server, sync a folder to a share | `Install-AfsServerEndpoint.ps1` | a file server, over PowerShell remoting |
+| Point on-premises DNS at the Azure DNS Private Resolver | `Set-AfsDnsForwarders.ps1` | your DNS servers |
+| Domain-join the storage account for AD DS authentication | `Join-AfsStorageAccountToAdDs.ps1` | Active Directory, from a domain-joined machine |
+
+Each is idempotent, supports `-WhatIf`, and has a `-Remove` reverse path. The DNS one forwards
+the **public** zones (`file.core.windows.net`, `afs.azure.net`) rather than the `privatelink`
+ones - a forwarder on a privatelink zone is never consulted, because the whole CNAME chain
+comes back in a single answer - and it refuses to write at all unless the resolver is proven to
+answer with a private address first.
+
 ## Door B - advise
 
 For the customer who will not be assessed, or whose estate does not exist yet.

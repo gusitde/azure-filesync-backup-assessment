@@ -30,6 +30,11 @@ the AD DS default - RC4 configurations start failing mounts.
 ## Reuse before reinvent (GR11)
 
 ```yaml
+- primitive: onprem/Join-AfsStorageAccountToAdDs.ps1
+  path: onprem/Join-AfsStorageAccountToAdDs.ps1
+  why: runs the whole procedure below idempotently, with the preflight that catches the two
+       things that make the join fail confusingly (missing RSAT, and a -WhatIf that is not
+       inert), a deterministic SamAccountName, and a reverse path in the right order
 - primitive: AzFilesHybrid module v0.3.2 (Join-AzStorageAccount, Debug-AzStorageAccountAuth, Update-AzStorageAccountADObjectPassword, Move-OnPremSharePermissionsToAzureFileShare)
   path: codex/playbook-enable-identity-based-auth-ad-ds.md
   why: the module performs the offline domain join, sets the SPN/UPN and AES-256 correctly;
@@ -75,6 +80,34 @@ the AD DS default - RC4 configurations start failing mounts.
 8. **Operations.** Set a reminder to rotate the AD object password with
    `Update-AzStorageAccountADObjectPassword` before any OU-enforced expiry; document the
    computer object and the Kerberos key name (`kerb1`) in the runbook.
+
+## What the current module does, and what older instructions get wrong
+
+Verified against AzFilesHybrid v0.3.2 source on 2026-09-03:
+
+- **`-EncryptionType` no longer exists.** It was removed in v0.2.9; AES-256 is unconditional and
+  the object is created with `KerberosEncryptionType = AES256`. Passing the parameter to a
+  current module is a binding error. Any instruction that includes it predates 2024.
+- **Never use positional parameters.** `-OrganizationalUnitDistinguishedName` and
+  `-ADObjectNameOverride` are both declared at position 5 in the shipped source, so a positional
+  argument binds to the wrong one. This is the origin of the "Cannot bind positional parameters"
+  error people hit.
+- **Always pass `-SamAccountName`.** Left to itself, for a storage account name longer than 15
+  characters the module takes the first 10 characters and appends **five random ones** - so two
+  runs create two differently named accounts and no idempotency check can ever match.
+- **`-WhatIf` is not inert.** The cmdlet validates in its `begin` block, which runs regardless:
+  Windows, domain-joined, and RSAT present. On a machine without RSAT it will try to install it,
+  which needs elevation, and the error - "This cmdlet requires an elevated PowerShell session" -
+  names the wrong problem entirely. Check the prerequisites yourself first.
+- **Always give an OU.** Without one the object is created wherever the *running machine's*
+  computer account lives, not at the domain root as some articles claim.
+- **A successful join leaves the AD password on kerb2**, because the join ends by rotating.
+  A verification that only checks kerb1 will report a healthy join as broken.
+- **The reverse parameter is `-EnableActiveDirectoryDomainServicesForFile $false`.** The
+  similarly named `-EnableAzureActiveDirectoryDomainServicesForFile` is a different feature
+  (Entra Domain Services) and will not undo this join.
+- **Capture the AD object before disabling AD DS.** `Get-AzStorageAccountADObject` resolves
+  through the storage account's own properties, and disabling erases them.
 
 ## Steps
 
