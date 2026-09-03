@@ -1,0 +1,23 @@
+%% Trade-off map of every connectivity control available on this project - how private it actually makes the traffic against what it costs to build and run
+%% Source: Microsoft Learn - Azure Storage firewall rules and network access (IP rules need Microsoft peering NAT addresses, service endpoints keep traffic on the public IP), Configure Azure File Sync network endpoints (no service endpoint option for File Sync), Private endpoints overview for Azure Backup (Azure Files backup does not need them), ExpressRoute circuits and peering; codex/blueprint-azure-files-private-endpoint.md, codex/blueprint-azure-file-sync-private-path.md
+quadrantChart
+  title Connectivity controls for Contoso file workloads
+  x-axis "Traffic still lands on a public IP" --> "Traffic stays on private IPs end to end"
+  y-axis "Cheap to build and run" --> "Expensive to build and run"
+  quadrant-1 "Private and costly - Contoso target, budget it once"
+  quadrant-2 "Costly and still public - never worth it here"
+  quadrant-3 "Cheap and public - todays state and the interim fallback"
+  quadrant-4 "Private and cheap - do these first"
+  Public endpoint wide open: [0.06, 0.08]
+  Trusted services bypass alone: [0.14, 0.05]
+  IP network rules on Contoso egress: [0.20, 0.30]
+  IP rules over Microsoft peering NAT: [0.30, 0.62]
+  Service endpoint for Azure VM subnets: [0.34, 0.16]
+  Vault private endpoint for Azure Files: [0.10, 0.66]
+  Force tunnel endpoints through an NVA: [0.62, 0.90]
+  ExpressRoute FastPath Private Link: [0.88, 0.83]
+  Private endpoint sub-resource file: [0.86, 0.34]
+  Private endpoint sub-resource Afs: [0.88, 0.42]
+  DNS resolver plus Infoblox forwarders: [0.80, 0.46]
+  incomingTrafficPolicy VirtualNetworksOnly: [0.93, 0.22]
+  Storage firewall Deny plus bypass: [0.72, 0.18]

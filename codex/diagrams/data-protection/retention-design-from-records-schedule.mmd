@@ -1,0 +1,43 @@
+%% Turning Contoso records-retention schedule into backup policy settings - which knob carries which requirement, and the ceiling on each knob
+%% Source: codex/blueprint-azure-files-backup-protection.md steps 3 and 4 (retention placeholders to be replaced by Contoso schedule); Microsoft Learn "Support matrix for Azure Files backup" (retention limits per tier), "Immutable vault" (retention can be raised, never reduced), "Secure by default with soft delete" (14 to 180 days), "Azure file share soft delete" (1 to 365 days) (read 2026-09-03)
+flowchart TB
+  IN(["One Contoso record series from the retention schedule<br/>Contoso supplies the years - nothing on this page assumes them"]) --> Q1
+
+  Q1{"Is the requirement an operational undo window<br/>measured in days, or a records requirement measured in years?"}
+
+  Q1 -->|"days - restore what a user broke this week"| SNAPT
+  Q1 -->|"years - the series must survive"| VAULTT
+
+  SNAPT["SNAPSHOT tier carries it<br/>snapshots live in stmtyfiles01 alongside the data"] --> SNAPCAP
+
+  SNAPCAP["Ceilings that decide the number you can actually set<br/>200 total recovery points per share, hard<br/>6 scheduled backups per day, hard<br/>daily frequency allows up to 200 days<br/>hourly frequency allows floor of 200 over snapshots per day, minus 1<br/>Contoso active policy runs 3 snapshots a day in an 8 hour window,<br/>so 65 days is available and the design takes 30"] --> SNAPWARN
+
+  SNAPWARN["This tier does NOT satisfy a records requirement.<br/>Microsoft classes it as an operational backup, so vault soft delete<br/>and vault immutability do not apply to it, and it dies with the account."] --> POLICY
+
+  VAULTT["VAULT-STANDARD tier carries it<br/>the copy sits in the vault, outside the account"] --> VQ1
+
+  VQ1{"Does the share fit the vault-tier envelope?<br/>10 TB per share and 10 million files per share"}
+  VQ1 -->|no| SPLIT["Split the share, or move the cold portion to its own share.<br/>An oversized share can only be left on the snapshot tier,<br/>which means the series has no offsite copy - record that as risk,<br/>do not quietly mark the share protected."]
+  VQ1 -->|yes| VCAP
+
+  VCAP["Ceilings, which are far above any Contoso series<br/>daily up to 9999 days<br/>weekly up to 5163 weeks<br/>monthly up to 1188 months<br/>yearly up to 99 years<br/>on-demand point up to 99 years<br/>single file up to 4 TB"] --> VQ2
+
+  VQ2{"Does the series need write-once evidence,<br/>not merely a copy that happens to still exist?"}
+  VQ2 -->|yes| IMMUT["Immutable vault Enabled, then Enabled and locked.<br/>What this then forbids on rsv-contoso-westus<br/>stop protection with deletion of data<br/>editing a policy to REDUCE retention<br/>reassigning an item to a policy with LOWER retention<br/>Retention can still be raised. Locking is irreversible."] --> POLICY
+  VQ2 -->|no| POLICY
+
+  POLICY["Write the numbers into the two Contoso policies<br/>AFS-Active-4h-30d-Vault-90d for actively edited department shares<br/>AFS-Archive-1d-30d-Vault-1y for cold and archive shares<br/>time zone Pacific, and only the LAST scheduled snapshot of the day<br/>is ever transferred to the vault"] --> CHECK
+
+  CHECK{"Does any series require the data to leave the region?"}
+  CHECK -->|yes| GRS["GeoRedundant with cross-region restore.<br/>Only vault-standard points replicate to East US.<br/>Budget up to 48 h after enabling, then 12 h per point."]
+  CHECK -->|"no - data residency forbids it"| LRS["LRS or ZRS vault.<br/>Say plainly that the estate then has no out-of-region copy,<br/>and that redundancy cannot be changed after the first protected item."]
+
+  TRAP["The trap to name in the report<br/>soft-delete retention is NOT a retention control.<br/>Vault soft delete, 14 to 180 days, is an undo window for a DELETED<br/>backup item. Share soft delete, 1 to 365 days with a default of 7,<br/>is an undo window for a DELETED share. Neither keeps a record for<br/>its schedule, and neither should ever appear in the retention column."]
+
+  GRS --> OUT(["Retention table signed by Contoso records officer<br/>each series mapped to a policy, a tier and a number<br/>with the ceiling that bounds it written beside it"])
+  LRS --> OUT
+  SPLIT --> OUT
+  TRAP -.->|"do not let this substitute for a policy retention"| POLICY
+
+  classDef warn fill:#f6e2e2,stroke:#a33,stroke-width:2px
+  class SNAPWARN,TRAP,SPLIT warn

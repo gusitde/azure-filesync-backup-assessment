@@ -1,0 +1,40 @@
+%% Migration failure and blast-radius map - what breaks, what it takes with it, what contains it - Contoso profile
+%% Source: Microsoft Learn "Migrate data into Azure File Sync with Azure Data Box" (authoritative upload mismatch wipes the share, SMB-only copy), "Migrate to Azure Files using RoboCopy" (/MIR on mismatched levels), "How to use DFS-N with Azure Files" (duplicate SPN), "Troubleshoot network connectivity issues - Azure Migrate", codex/runbook-private-endpoint-name-resolution-and-reachability.md, codex/blueprint-azure-migrate-private-link-landing.md
+flowchart LR
+  subgraph T["Trigger - the thing an engineer actually does wrong"]
+    T1["Server endpoint created with initial upload policy ServerAuthoritative<br/>on a path whose hierarchy does not match the Data Box seed"]
+    T2["robocopy /MIR started one folder level above or below the matching level"]
+    T3["Name takeover done while HOST/FILE01 is still registered on the old computer account"]
+    T4["Infoblox forwarder for a privatelink zone missing, or a duplicate zone linked to the VNet"]
+    T5["Trusted-services bypass removed from the Migrate cache storage account"]
+    T6["Data Box loaded with the data copy service, or with Data Box Disk"]
+    T7["Storage Mover agent egress to TCP 443 blocked by the edge firewall"]
+  end
+  subgraph B["Blast radius - what it takes with it"]
+    B1["Every file in the Azure file share is deleted and re-uploaded from the server.<br/>The whole Data Box shipment is wasted and the wave slips by weeks"]
+    B2["Large-scale deletions and recopies on the target share.<br/>The catch-up window becomes a full re-upload"]
+    B3["Every client of the old server name - target account name is incorrect,<br/>or a silent fall back to NTLM that later fails a Kerberos-only storage account"]
+    B4["The Migrate appliance resolves a public IP, the storage firewall denies it,<br/>discovery and replication stop for every VM behind that appliance.<br/>Past 90 minutes the replication cycle restarts from 0 percent"]
+    B5["The vault managed identity can no longer write to the cache account.<br/>Replication fails for every machine in the project, not just one"]
+    B6["Files arrive without ACLs, owners or timestamps.<br/>Nothing fails loudly - the loss is only visible at permission-audit time"]
+    B7["Every Storage Mover job run for every share stalls at once,<br/>because one agent serves many job definitions"]
+  end
+  subgraph C["Containment - what stops it, or gets the data back"]
+    C1["Pre-check the first-level folder names against the share before creating the endpoint.<br/>File Sync also takes a share snapshot with initiator AzureFileSync before the endpoint is created - restore from it"]
+    C2["Run the pass with /L first, keep share soft delete at 14 days,<br/>and keep the 4-hourly Azure Backup snapshots running through the wave"]
+    C3["setspn -T organization -F -Q for the name across the forest before netdom.<br/>Disable the old computer account, never delete it, so re-enabling it is the rollback"]
+    C4["The project Download DNS settings file is the oracle - every FQDN must answer with the listed private IP<br/>from the appliance before replication is enabled. No hosts-file entries at go-live"]
+    C5["Keep bypass AzureServices on the cache account, or first add the resource instance rule for<br/>Microsoft.RecoveryServices/vaults - the vault managed identity is the principal that writes here.<br/>Microsoft.Migrate/migrateprojects is the right instance type only for the project usage storage account"]
+    C6["Data Box and Data Box Heavy over SMB with the documented robocopy line only.<br/>Data Box Disk is excluded for file shares - it does not preserve file metadata"]
+    C7["This leg cannot be moved onto ExpressRoute - the agent needs outbound internet on 443.<br/>Where Contoso policy forbids that, use agentless SMB with credentials in Key Vault instead"]
+  end
+  T1 -->|"takes down"| B1 -->|"contained by"| C1
+  T2 -->|"takes down"| B2 -->|"contained by"| C2
+  T3 -->|"takes down"| B3 -->|"contained by"| C3
+  T4 -->|"takes down"| B4 -->|"contained by"| C4
+  T5 -->|"takes down"| B5 -->|"contained by"| C5
+  T6 -->|"takes down"| B6 -->|"contained by"| C6
+  T7 -->|"takes down"| B7 -->|"contained by"| C7
+  BOUND["Blast boundary: one wave equals one department share and one DFS folder.<br/>Never cut two departments in the same window, and never let one storage account<br/>hold the shares of two different waves - a share-level restore then touches both."]
+  C1 -.-> BOUND
+  C3 -.-> BOUND

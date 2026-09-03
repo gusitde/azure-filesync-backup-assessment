@@ -1,0 +1,42 @@
+%% Which resolver actually answers - the documented precedence for an Azure client and for a Contoso client, and every branch that ends in a public IP
+%% Source: Microsoft Learn "Azure DNS Private Resolver overview" (the nine-step query process), "Azure DNS Private Resolver endpoints and rulesets" (longest prefix match, disabled rules, reserved two-label domains, wildcard caveat), "Configure DNS forwarding for Azure Files" (cross-tenant warning); codex/blueprint-azure-dns-for-private-endpoints.md Resolution walk-throughs
+flowchart TB
+  START{"Where does the query start?"}
+
+  START -->|"an Azure VM or a private endpoint client inside a VNet"| A1
+  START -->|"a Contoso file server, workstation or the Migrate appliance on contoso.local"| B1
+
+  A1{"Does the VNet carry custom DNS servers, for example Infoblox vNIOS in Azure?"}
+  A1 -->|"yes - step 2 of the documented order"| ACUST["The query leaves for those IP addresses and NOTHING below is consulted. Linked private DNS zones and ruleset rules are bypassed. vNIOS must itself forward core.windows.net and afs.azure.net to 168.63.129.16 or every privatelink name resolves publicly. This is the one pattern OR the other, never both."]
+  A1 -->|"no - Default Azure-provided DNS, Contoso choice"| A2
+
+  A2{"Is a private DNS zone whose name matches the query linked to this VNet?"}
+  A2 -->|"yes"| AZONE["The linked zone is authoritative and the answer stops here. A record present gives the endpoint IP. No A record gives NXDOMAIN, not a fallthrough to public DNS. This is why a duplicate zone of the same name, or a zone linked with no zone group behind it, breaks resolution instead of degrading it."]
+  A2 -->|"no"| A3
+
+  A3{"Is a DNS forwarding ruleset linked to this VNet with a rule whose suffix matches?"}
+  A3 -->|"yes"| ARULE["Longest prefix match wins. A rule for contoso.local. beats a wildcard. A rule whose state is Disabled is ignored as if absent. Up to 6 target servers per rule and the first one is used until it stops answering, then the next, with exponential backoff."]
+  A3 -->|"no match, or no ruleset link"| APUB["Azure DNS resolves it. For a privatelink name that means NXDOMAIN, and for a public storage name that means the public storage cluster IP. The VM has just left the private path without any error."]
+
+  ARULE --> AOUT["Outbound endpoint forwards the query out of Azure over ExpressRoute to the Infoblox grid members on port 53."]
+
+  WILD["A wildcard rule for . is the tempting shortcut and it does not do what it looks like. The target must be able to resolve PUBLIC names or Azure services break, and the reserved two-label domains - windows.net, azure.com, azure.net, windowsazure.us - are ignored by a wildcard rule anyway, so it never captures core.windows.net or afs.azure.net."]
+  A3 -.-> WILD
+
+  B1{"Does an Infoblox forward zone match the name as queried?"}
+  B1 -->|"no - the name is the PUBLIC form, for example an account name under file.core.windows.net"| B2
+  B1 -->|"yes - the name is already under a privatelink suffix"| BFWD
+
+  B2["The grid recurses to public DNS and Microsoft answers with a CNAME to the account name under privatelink.file.core.windows.net. Microsoft owns that CNAME. It is present whether or not a private endpoint exists and it cannot be removed."]
+  B2 --> B3{"Does a forward zone match the privatelink name the CNAME just produced?"}
+  B3 -->|"yes - forward-only to the inbound endpoint"| BFWD
+  B3 -->|"no"| BPUB["The grid follows the chain publicly and answers the public IP of the storage cluster. Nothing is broken yet. It breaks the moment the storage firewall goes to Deny, and then every client fails at once. This is failure class 1 in the resolution runbook."]
+
+  BFWD["Forward-only to the inbound endpoint 10.100.20.4 over ExpressRoute. The inbound endpoint resolves against the private DNS zones linked to the hub VNet and answers the private IP."]
+
+  BFWD --> BOK["Answer is a 10.x address. Only now is Test-NetConnection on 445 or 443 the next question, and a failure there is a routing or firewall class, not a DNS class."]
+  AZONE --> BOK
+  AOUT --> BOK
+
+  XT["Cross-tenant caveat that decides forwarder scope. If the grid forwards the whole core.windows.net suffix, every query for that public domain goes to Azure DNS, and a storage account in ANOTHER tenant that uses private endpoints is answered with a CNAME that does not exist in any zone linked here - NXDOMAIN. The documented workaround is a cross-tenant private endpoint of your own."]
+  B3 -.-> XT

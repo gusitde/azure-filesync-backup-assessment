@@ -1,0 +1,66 @@
+%% Lifecycle of the file share OBJECT itself - the states between live and permanently gone, and the deliberate path an attacker uses to skip them
+%% Source: codex/runbook-restore-file-share-and-share-soft-delete.md class 4; Microsoft Learn "Azure file share soft delete" (1 to 365 days, default 7, undelete restores snapshots, permanent-delete procedure), "About Azure Files backup" (infinite lease, Backup enables soft delete at 14 days), "Recover a deleted storage account" (14 days, private endpoints not recreated) (read 2026-09-03)
+stateDiagram-v2
+  direction TB
+
+  state "Storage account stmtyfiles01 - Microsoft.Storage provider" as ACCOUNT {
+    direction TB
+
+    state "Live - the share is mounted, synced and being backed up" as LIVE
+    state "Live and leased - Azure Backup holds an infinite lease on every snapshot it took" as LEASED
+    state "Soft deleted - listed only with --include-deleted, carries a deletedTime, a deletedShareVersion and remainingRetentionDays" as SOFT
+    state "Expired - the retention clock ran out and the share is unrecoverable" as GONE
+    state "Soft delete turned OFF at the file service level - new deletions are immediate and permanent" as OFFSTATE
+
+    [*] --> LIVE : az storage share-rm create
+    LIVE --> LEASED : Enable-AzRecoveryServicesBackupProtection, then the first snapshot
+    LEASED --> LEASED : every scheduled backup adds another leased snapshot, up to 200
+
+    LEASED --> SOFT : share deleted - the lease makes this several steps rather than one click, it does not forbid it
+    LIVE --> SOFT : share deleted while soft delete is enabled on the account
+    SOFT --> LEASED : undelete - the share AND every snapshot on it return exactly as they were
+    SOFT --> GONE : remainingRetentionDays reaches zero
+
+    LIVE --> OFFSTATE : Update-AzStorageFileServiceProperty -EnableShareDeleteRetentionPolicy false
+    OFFSTATE --> GONE : delete - nothing catches it
+    OFFSTATE --> LIVE : soft delete re-enabled, which does not help a share already gone
+  }
+
+  state "Account-level events that take the share with them" as OUTER {
+    direction TB
+    state "Storage account deleted - every share, snapshot and private endpoint goes at once" as ACCTDEL
+    state "Account restored - best effort, portal Restore deleted account" as ACCTBACK
+    state "Account unrecoverable - name reused, resource group deleted, or past 14 days" as ACCTGONE
+
+    ACCTDEL --> ACCTBACK : within 14 days, ARM account, resource group still present, name not taken
+    ACCTDEL --> ACCTGONE : any of those four conditions fails
+  }
+
+  LEASED --> ACCTDEL : account-level deletion ignores share soft delete entirely
+  ACCTBACK --> LIVE : the shares come back, but the file private endpoint does NOT
+  ACCTGONE --> VAULTONLY
+  GONE --> VAULTONLY
+
+  state "Only the vault-standard copy is left - restore to an ALTERNATE share in a new account, then rebuild the cloud endpoint" as VAULTONLY
+
+  note right of ACCOUNT
+    The bypass to state out loud in the report.
+    Permanently deleting a soft-deleted share is a documented
+    three-step procedure - undelete it, disable soft delete on
+    the file service, delete it again. Every step is a data-plane
+    or account-property action that Azure Backup and the MUA
+    Resource Guard never see. Only RBAC on the storage account,
+    the CanNotDelete lock and Azure Policy stand between a
+    compromised Storage Account Contributor and a permanent loss.
+  end note
+
+  note right of OUTER
+    Contoso defaults that matter here.
+    Soft delete is an ACCOUNT-level setting covering every share
+    on stmtyfiles01, configurable from 1 to 365 days with a default
+    of 7. Azure Backup raises it to 14 when protection is enabled,
+    and Contoso baseline holds it at 14 or more. Recovering a
+    deleted ACCOUNT does not recreate the private endpoint, its DNS
+    zone group or the Infoblox forwarder record - plan that rebuild
+    into the runbook, or sync stays broken after a successful restore.
+  end note

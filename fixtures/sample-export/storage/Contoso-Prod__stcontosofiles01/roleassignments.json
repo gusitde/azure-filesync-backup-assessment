@@ -1,0 +1,22 @@
+[
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01/providers/Microsoft.Authorization/roleAssignments/ra1",
+  "scope": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01",
+  "roleName": "Owner",
+  "roleDefinitionId": "/subscriptions/x/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+  "principalId": "user-guid",
+  "principalType": "User",
+  "condition": null,
+  "createdOn": "2025-01-01T00:00:00Z"
+ },
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01/providers/Microsoft.Authorization/roleAssignments/ra2",
+  "scope": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01",
+  "roleName": "Reader and Data Access",
+  "roleDefinitionId": "/subscriptions/x/providers/Microsoft.Authorization/roleDefinitions/c12c1c16-33a1-487b-954d-41c89c60f349",
+  "principalId": "afs-sp-guid",
+  "principalType": "ServicePrincipal",
+  "condition": null,
+  "createdOn": "2025-01-01T00:00:00Z"
+ }
+]

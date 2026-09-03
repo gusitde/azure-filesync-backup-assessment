@@ -1,0 +1,36 @@
+%% Two planes of an Azure Migrate engagement - discovery and assessment versus replication and cutover - what differs and what is irreversible - Contoso profile
+%% Source: codex/blueprint-azure-migrate-private-link-landing.md (endpoint and zone map, public URLs), Microsoft Learn "Migrate servers to Azure by using Private Link", "Migration overview for SMB Azure file shares" (Azure Migrate file share discovery and assessment readiness states)
+flowchart TB
+  subgraph D["Plane 1 - discovery and assessment. Read-only, reversible, no downtime"]
+    D1["Traffic goes to the project private endpoint over ExpressRoute"]
+    D2["Azure resources touched: the Migrate project, the Key Vault holding the appliance key,<br/>and the usage storage account that carries performance and dependency data"]
+    D3["Zones needed: privatelink.prod.migration.windowsazure.com, privatelink.vaultcore.azure.net,<br/>privatelink.blob.core.windows.net"]
+    D4["Output: server readiness and sizing, a business case,<br/>and for file shares a readiness of ready, ready with conditions, or not ready"]
+    D5["Also discovers SMB and NFS shares on the discovered servers with no extra setup,<br/>which is where the share wave list comes from"]
+    D6["Reversible. Delete the assessment and nothing in Contoso estate changed"]
+  end
+  subgraph R["Plane 2 - replication and cutover. Writes, and several choices cannot be taken back"]
+    R1["Traffic goes to the cache storage account blob endpoint and the vault siterecovery endpoint"]
+    R2["Azure resources touched: the Recovery Services vault created by Migrate,<br/>and Contoso-owned cache storage account with its blob private endpoint"]
+    R3["Zone added: privatelink.siterecovery.windowsazure.com<br/>with five vault names of the form vault-id asr-pod01 type geo.<br/>The cache account reuses privatelink.blob.core.windows.net - blob is the only cache sub-resource Migrate documents"]
+    R4["Output: a replicating machine, a test migration on a non-production VNet,<br/>then a cutover with a final on-demand replication"]
+    R5["Irreversible or costly to change: the project connectivity method,<br/>the target region and cache account once a machine has replicated once,<br/>and a stopped replication which discards the seed and repeats the full initial copy"]
+    R6["Downtime lands here, and only here"]
+  end
+  subgraph S["Shared spine - built once, used by both planes"]
+    S1["ExpressRoute private peering and the private-endpoint subnet"]
+    S2["Infoblox conditional forwarders to the Private Resolver inbound endpoint"]
+    S3["The appliance itself, registered once and used for both planes"]
+    S4["Public leg that stays public in both planes: portal, Entra ID, management.azure.com,<br/>aka.ms and download.microsoft.com"]
+  end
+  S1 --> D1
+  S1 --> R1
+  S2 --> D3
+  S2 --> R3
+  S3 --> D2
+  S3 --> R2
+  D4 -->|"the assessment picks the target size and the wave order"| R4
+  D5 -->|"the discovered share list feeds the file-migration waves, which do NOT use this plane at all"| FILE
+  FILE["File data never moves through Azure Migrate.<br/>Shares move by File Sync, Data Box, Storage Mover or RoboCopy,<br/>over their own paths, on their own gates."]
+  R6 -->|"gate before any cutover is scheduled"| GATE
+  GATE["A machine may not be cut over until a test migration has been run for it at least once,<br/>and a share may not be cut over until a catch-up pass has been timed."]

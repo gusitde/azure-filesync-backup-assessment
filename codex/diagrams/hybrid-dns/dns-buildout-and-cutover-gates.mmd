@@ -1,0 +1,20 @@
+%% Order of build for the hybrid DNS layer and the gate that must pass before the next phase - DNS is always built before the first private endpoint, never after
+%% Source: codex/playbook-deploy-dns-private-resolver-and-forwarders.md Procedure and Steps, codex/playbook-add-file-private-endpoint-and-dns.md steps 5 to 7, codex/blueprint-azure-file-sync-private-path.md steps 7 and 8, codex/blueprint-azure-dns-for-private-endpoints.md step 5; Microsoft Learn "Azure DNS Private Resolver overview" and "Configure Azure File Sync network endpoints"
+timeline
+  title Hybrid DNS build-out and cut-over, Contoso
+  section Phase 0 - design decisions on paper
+    Fix the values before any deployment : pick the two delegated slash 28 blocks in the hub and the static inbound address : decide forwarder scope, seven privatelink forward zones rather than the public suffix : decide one pattern only, Azure-provided DNS in the spokes OR vNIOS in Azure, not both : GATE is a landing-zone design that names the inbound address and the seven zones
+  section Phase 1 - Azure side, no client impact
+    Deploy the resolver and the zone set : delegate both subnets to Microsoft.Network slash dnsResolvers and confirm the delegation prints twice : deploy dns-resolver 0.5.8, dns-forwarding-ruleset 0.5.4 and private-dns-zone 0.8.1 : link every zone and the ruleset to the hub and to each spoke : GATE is dnsResolverState Connected, seven zone names, and a link count equal to one plus the number of spokes
+  section Phase 2 - reverse direction first, it is the safe one
+    Azure resolves Contoso names : add the organization-local rule to the two grid members on port 53, plus the reverse zones for Contoso prefixes : open UDP and TCP 53 from the outbound subnet to the grid members on Contoso firewall : GATE is a spoke VM resolving dc01.contoso.local to the domain controller address
+  section Phase 3 - Contoso side, still no lock-down
+    Infoblox forward zones : create one forward-only zone per privatelink name on every grid member that serves the file servers, the workstations and the Migrate appliance : reserve the inbound address and both endpoint addresses in IPAM with the azure-resource-id attribute : GATE is a SOA query for privatelink.file.core.windows.net against the inbound address returning azureprivatedns-host.microsoft.com
+  section Phase 4 - endpoints and records
+    One private endpoint at a time : create the endpoint, attach the DNS zone group to the CENTRAL zone, never a hand-made record : reconcile the zones Azure Migrate created in the project resource group, link them or merge them, never leave two zones of one name : reserve every endpoint address in IPAM : GATE is exactly one A record per name and zero duplicate zone names across the estate
+  section Phase 5 - prove it from every client that matters
+    The gate that the whole design rests on : Clear-DnsClientCache then Resolve-DnsName on EVERY registered server, every direct SMB client and the Migrate appliance : all four Storage Sync Service names plus the storage account name return 10.x : Test-NetConnection on 445 and 443 returns True : Debug-StorageSyncServer -TestNetworkConnectivity succeeds : GATE is private resolution everywhere with no exceptions and no hosts-file entries
+  section Phase 6 - close the public paths, one at a time
+    Storage account first, sync service second : set defaultAction Deny with bypass AzureServices and the Storage Sync Service resource instance rule, keep publicNetworkAccess Enabled : wait for a 9102 with HResult 0 and a completed cloud change enumeration : only then Set-AzStorageSyncService -IncomingTrafficPolicy AllowVirtualNetworksOnly : GATE within 60 minutes is every server endpoint Healthy and an on-demand backup job Completed
+  section Phase 7 - evidence and hand-back
+    Close the change : re-run the assessor with -PrivateTrafficRequired and expect no NET-02, NET-04, NET-10 or NET-11 : record the inbound address and the zone list in the blueprint Contoso profile table : file both assessments with the change record : GATE is the resolution walk-through table answered correctly from each named client

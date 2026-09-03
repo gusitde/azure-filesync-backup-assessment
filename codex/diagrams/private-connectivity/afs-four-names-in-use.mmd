@@ -1,0 +1,51 @@
+%% The four names behind one Afs private endpoint - which one carries which conversation, and what happens when only three of them resolve
+%% Source: Microsoft Learn - Configure Azure File Sync network endpoints (the private endpoint publishes mysssmanagement, myssssyncp, myssssyncs and mysssmonitoring under privatelink.afs.azure.net, group id Afs, incomingTrafficPolicy AllowAllTraffic or AllowVirtualNetworksOnly, no service endpoint option); codex/blueprint-azure-file-sync-private-path.md step 3; codex/runbook-file-sync-broken-after-network-lockdown.md class 3
+sequenceDiagram
+  autonumber
+  participant SRV as Registered server on contoso.local
+  participant IB as Infoblox grid
+  participant RES as Private Resolver inbound endpoint
+  participant ZONE as Zone privatelink.afs.azure.net
+  participant PE as Private endpoint pe-sss-afs, four IP configurations
+  participant SSS as Storage Sync Service
+  participant SA as Storage account file endpoint
+
+  Note over SRV,SSS: One endpoint, four host names. The pattern is sssname plus management, syncp, syncs and monitoring, each prefixed to region dot afs.azure.net
+
+  SRV->>IB: sssname-management.region.afs.azure.net ?
+  IB->>RES: forwarded because the public answer is a CNAME into privatelink.afs.azure.net
+  RES->>ZONE: lookup A
+  ZONE-->>SRV: 10.51.x.11
+  SRV->>PE: HTTPS 443 to the management name
+  PE->>SSS: registration and management calls, server registration record and configuration
+
+  SRV->>PE: HTTPS 443 to the monitoring name 10.51.x.14
+  PE->>SSS: agent telemetry and health, the feed behind the StorageSyncServerHeartbeat metric
+
+  loop every 30 seconds
+    SRV->>PE: HTTPS 443 GetNextJob on the primary sync name syncp 10.51.x.12
+    PE->>SSS: job poll
+    SSS-->>SRV: status 0, written to Telemetry event 9301
+  end
+
+  SRV->>PE: HTTPS 443 sync session on syncp, with syncs 10.51.x.13 as the secondary sync channel
+  PE->>SSS: metadata, change batches and cloud endpoint coordination
+  SSS-->>SRV: session result, written to Telemetry event 9102 with HResult 0
+
+  Note over SRV,SA: File bytes never travel on any afs name. Upload, download and recall go to the storage account file endpoint on its own private endpoint and its own zone
+  SRV->>SA: HTTPS 443 FileREST through pe-account-file
+
+  alt one of the four names is missing from the zone or from the forwarder
+    SRV->>IB: sssname-syncs.region.afs.azure.net ?
+    IB-->>SRV: public IP or NXDOMAIN
+    SRV->>SRV: Debug-StorageSyncServer -TestNetworkConnectivity fails on that one name only
+    Note over SRV,SSS: While incomingTrafficPolicy is still AllowAllTraffic the agent falls back to the public path and nothing looks broken. This is the trap
+    SRV->>SSS: same call over the public endpoint
+  else the policy was already set to AllowVirtualNetworksOnly
+    SRV->>SSS: call refused, there is no public path left
+    SSS-->>SRV: no answer, 9301 stops returning status 0
+    Note over SRV,SSS: Every registered server on this Storage Sync Service goes to Appears Offline, not just this one. Assessor AFS-11 and NET-05
+    SRV->>SSS: rollback Set-AzStorageSyncService -IncomingTrafficPolicy AllowAllTraffic restores sync in minutes
+  end
+
+  Note over SRV,ZONE: The gate before the policy change is all four names returning 10.x on EVERY registered server. Three out of four is a failed gate, and a hosts file entry is a testing workaround, never the production answer

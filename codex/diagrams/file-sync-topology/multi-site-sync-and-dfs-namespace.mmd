@@ -1,0 +1,61 @@
+%% Multi-site sync through one cloud endpoint hub, with DFS Namespaces in front and DFS Replication coexistence rules - Contoso profile
+%% Source: Microsoft Learn Plan an Azure File Sync deployment (Distributed File System, sync topologies) and Create a server endpoint (initial download, proactive recall), read 2026-09-03; codex/blueprint-azure-file-sync-private-path.md
+flowchart LR
+  subgraph Users["Contoso users and applications"]
+    U1[Main campus workstations]
+    U2[Branch office workstations]
+    U3[Application servers]
+  end
+  subgraph DFSN["DFS Namespaces - contoso.local domain-based namespace"]
+    NS["Single logical path for users - the namespace hides which server answers - Azure File Sync is fully supported behind DFS-N"]
+  end
+  subgraph SiteA["Contoso main campus"]
+    FSA["File server A - agent v20+ - server endpoint D dept - cloud tiering ON - volume free space 20 percent"]
+    DCA[("contoso.local domain controller - AD DS - AES-256 Kerberos")]
+  end
+  subgraph SiteB["Contoso branch office"]
+    FSB["File server B - agent v20+ - server endpoint E dept - cloud tiering ON - NamespaceOnly initial download"]
+  end
+  subgraph SiteC["Contoso site with DFS-R still running"]
+    FSC["File server C - server endpoint on a DFS-R replicated folder - cloud tiering MUST be OFF on that volume"]
+  end
+  subgraph ER["ExpressRoute private peering"]
+    CKT["Circuit and gateway - the only private path to the endpoints"]
+  end
+  subgraph Spoke["Private-endpoint spoke"]
+    PE1["Private endpoint afs - 4 IPs - sync control and metadata"]
+    PE2["Private endpoint file - 1 IP - file data and recalls"]
+  end
+  SSS["Storage Sync Service - one sync group per share - max 100 server endpoints per sync group - at most ONE endpoint per server per sync group"]
+  SHARE[("Azure file share dept - the cloud endpoint - always holds the complete data set")]
+
+  U1 -->|SMB 445| NS
+  U2 -->|SMB 445| NS
+  U3 -->|SMB 445| NS
+  NS -->|referral to the nearest server| FSA
+  NS -->|referral to the nearest server| FSB
+  FSA -->|HTTPS 443 sync control| CKT
+  FSB -->|HTTPS 443 sync control| CKT
+  FSC -->|HTTPS 443 sync control| CKT
+  CKT --> PE1 --> SSS
+  FSA -->|HTTPS 443 FileREST upload and recall| CKT
+  FSB -->|HTTPS 443 FileREST upload and recall| CKT
+  CKT --> PE2 --> SHARE
+  SSS -->|change enumeration and cloud endpoint ops on the trusted-services path - never on ExpressRoute| SHARE
+  DCA -.->|Kerberos and NTFS ACLs are preserved and replicated to every endpoint| FSA
+
+  subgraph Behaviour["What each server actually receives"]
+    B1["A change made on server A syncs up on the USN journal within minutes"]
+    B2["Server B sees the file as a TIERED file - namespace only - until someone opens it"]
+    B3["Proactive recall makes server B download the content immediately - it costs egress and can push other content out of the cache"]
+    B4["A change made directly in the share waits for the 24 hour change detection job"]
+  end
+  SHARE --> Behaviour
+
+  subgraph DFSR["DFS Replication coexistence - all three rules or it breaks"]
+    R1["Cloud tiering OFF on any volume that holds a DFS-R replicated folder"]
+    R2["Never put a server endpoint on a read-only DFS-R replication folder"]
+    R3["Only a single server endpoint may overlap a DFS-R location - more than one causes conflicts"]
+  end
+  FSC --> DFSR
+  DFSR -.->|target state - replace DFS-R with Azure File Sync| SSS

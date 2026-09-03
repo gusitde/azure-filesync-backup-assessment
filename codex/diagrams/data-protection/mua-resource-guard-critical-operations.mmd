@@ -1,0 +1,34 @@
+%% Multi-user authorization - the Resource Guard between Contoso backup admin and every destructive vault operation
+%% Source: codex/blueprint-azure-files-backup-protection.md and codex/playbook-enable-azure-backup-for-file-shares.md; Microsoft Learn "Multiuser authorization using Resource Guard" (read 2026-09-03)
+sequenceDiagram
+  autonumber
+  participant BA as Backup admin - eng-sysops
+  participant RSV as Vault rsv-contoso-westus
+  participant ARM as Azure Resource Manager
+  participant RG as Resource Guard - 2nd subscription
+  participant SEC as Security admin - Backup MUA Admin
+  participant PIM as Entra PIM
+  Note over BA,RG: Setup rule that makes MUA real - the backup admin holds NO<br/>Contributor, Backup MUA Admin or Backup MUA Operator on the Guard
+  SEC->>RG: create the Resource Guard where the backup admin has no write path
+  SEC->>BA: grant Reader on the Resource Guard - the minimum to bind a vault
+  BA->>RSV: enable multi-user authorization and associate the Resource Guard
+  RSV-->>BA: MUA Enabled - mandatory protected ops are Disable soft delete<br/>or security features, and Remove MUA protection
+  Note over RSV,RG: Optional ops kept protected for Contoso - Delete protection,<br/>Modify protection, Modify policy, Stop backup and retain data,<br/>Disable immutability, Delete hybrid container, Get backup security PIN
+  BA->>RSV: attempt Disable soft delete on rsv-contoso-westus
+  RSV->>ARM: authorize against the associated Resource Guard
+  ARM->>RG: does this caller hold Backup MUA Operator here
+  alt no role on the Resource Guard - the normal steady state
+    RG-->>ARM: no
+    ARM-->>BA: request fails - softDeleteState stays AlwaysON<br/>and every recovery point survives
+    Note over BA,RSV: The ransomware case. A stolen backup-admin credential cannot<br/>shorten retention, disable immutability or purge recovery points.
+  else time-boxed approval recorded in the change ticket
+    BA->>SEC: justify the operation with the change ticket id
+    SEC->>PIM: activate Backup MUA Operator on the Guard, time bound
+    PIM-->>ARM: role active for the approved window only
+    RG-->>ARM: yes
+    ARM-->>RSV: operation permitted
+    RSV-->>BA: setting changed - recorded in the vault activity log
+    PIM->>SEC: activation expires and the role is revoked automatically
+    Note over SEC,PIM: Never grant Contributor or Backup MUA Admin for this -<br/>both also allow deleting the Resource Guard itself.
+  end
+  Note over RSV,RG: Designed blind spot - MUA guards vault operations only.<br/>Deleting the file share or the storage account is a data-plane action<br/>the Guard never sees. Share soft delete, the snapshot lease and the<br/>vault-standard copy are the controls that cover that.

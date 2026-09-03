@@ -1,0 +1,54 @@
+{
+ "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01",
+ "name": "stcontosofiles01",
+ "type": "Microsoft.Storage/storageAccounts",
+ "location": "westus2",
+ "tags": {},
+ "sku": {
+  "name": "Standard_LRS",
+  "tier": "Standard"
+ },
+ "kind": "StorageV2",
+ "properties": {
+  "keyCreationTime": {
+   "key1": "2024-01-15T10:00:00.0000000Z",
+   "key2": "2024-01-15T10:00:00.0000000Z"
+  },
+  "privateEndpointConnections": [],
+  "minimumTlsVersion": "TLS1_0",
+  "allowBlobPublicAccess": true,
+  "allowCrossTenantReplication": false,
+  "networkAcls": {
+   "bypass": "AzureServices",
+   "virtualNetworkRules": [],
+   "ipRules": [],
+   "defaultAction": "Allow"
+  },
+  "supportsHttpsTrafficOnly": true,
+  "encryption": {
+   "services": {
+    "file": {
+     "keyType": "Account",
+     "enabled": true,
+     "lastEnabledTime": "2024-01-15T10:00:00Z"
+    },
+    "blob": {
+     "keyType": "Account",
+     "enabled": true,
+     "lastEnabledTime": "2024-01-15T10:00:00Z"
+    }
+   },
+   "keySource": "Microsoft.Storage"
+  },
+  "accessTier": "Hot",
+  "provisioningState": "Succeeded",
+  "creationTime": "2024-01-15T10:00:00Z",
+  "primaryLocation": "westus2",
+  "statusOfPrimary": "available",
+  "largeFileSharesState": "Disabled",
+  "azureFilesIdentityBasedAuthentication": {
+   "directoryServiceOptions": "None"
+  },
+  "publicNetworkAccess": "Enabled"
+ }
+}

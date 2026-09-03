@@ -1,0 +1,71 @@
+%% Azure Data Box seed - order states, the copy rules that decide whether the seed is usable, and the File Sync attach decision - Contoso profile
+%% Source: Microsoft Learn "Tutorial to return Azure Data Box" (order states, prepare to ship, CRC check, NIST SP 800-88 Rev 1 erasure, 14-day auto-complete), "Migrate data into Azure File Sync with Azure Data Box" (SMB only, first-level folder mapping, 10 storage accounts per appliance, authoritative upload rules)
+stateDiagram-v2
+  direction TB
+  [*] --> Ordered
+
+  state "Ordered - the target storage accounts are named on the order" as Ordered
+  note right of Ordered
+    One appliance can feed at most 10 storage accounts.
+    Never split one file share across two appliances.
+    Data Box Disk is excluded for Azure file shares because
+    it does not preserve file metadata.
+  end note
+
+  state "Delivered and unlocked on Contoso LAN" as Delivered
+  Ordered --> Delivered : carrier transit, plan one to two weeks each way
+
+  state Copying {
+    [*] --> ShareLayout
+    state "Write into the account underscore AzFile SMB share only" as ShareLayout
+    state "One first-level folder per source share - the folder name becomes the Azure file share name" as FolderRule
+    state "robocopy /MT /R /W /B /MIR /IT /COPY DATSO /DCOPY DAT into that folder" as Copy
+    ShareLayout --> FolderRule : ignore the block and page blob shares on the same device
+    FolderRule --> Copy
+    Copy --> [*] : copy log clean
+  }
+  Delivered --> Copying
+  note left of Copying
+    Only SMB copy is supported for Data Box and Data Box Heavy.
+    The data copy service is not usable here because it does not
+    preserve file fidelity. Files written to the root of the
+    AzFile share instead of a first-level folder are not ingested.
+  end note
+
+  state "Prepare to ship - device validation, reference number and shipping label" as Prepare
+  Copying --> Prepare
+  Prepare --> Copying : validation errors, fix and re-run
+  state "Picked up - carrier scan, tracking id in the portal" as PickedUp
+  Prepare --> PickedUp : prepare to ship succeeded
+
+  state "Received - physical inspection at the Azure datacenter" as Received
+  PickedUp --> Received
+  state "Data copy in progress - upload runs, CRC compared against the copy" as Uploading
+  Received --> Uploading
+
+  state "Completed" as Completed
+  state "Data copy completed with errors, device pending data erasure" as WithErrors
+  Uploading --> Completed : every file uploaded and the CRCs match
+  Uploading --> WithErrors : non-retryable errors in the copy log
+  WithErrors --> ErasedWithErrors : operator confirms device erasure, or the order auto-completes after 14 days
+  state "Copy completed with errors - the missed files must be moved by wire" as ErasedWithErrors
+
+  state "Secure erase to NIST SP 800-88 Revision 1" as Erased
+  Completed --> Erased
+  ErasedWithErrors --> Erased
+
+  state HierarchyCheck <<choice>>
+  Completed --> HierarchyCheck : now attach Azure File Sync to the seeded share
+  HierarchyCheck --> Authoritative : the server path matches the seeded hierarchy exactly
+  HierarchyCheck --> Merge : any mismatch, or the share already has another server endpoint
+
+  state "Initial upload ServerAuthoritative - only available on the FIRST server endpoint in the sync group" as Authoritative
+  state "Initial upload Merge - conflicting files are kept side by side" as Merge
+  state "Seed realised - only the changes since the copy travel over ExpressRoute" as Seeded
+  state "Seed destroyed - the Azure file share is emptied and re-uploaded in full from the server" as Wasted
+  Authoritative --> Seeded : hierarchy verified before the endpoint was created
+  Authoritative --> Wasted : hierarchy was not verified
+  Merge --> Seeded : slower reconciliation, no data loss
+  Seeded --> [*]
+  Wasted --> [*]
+  Erased --> [*]

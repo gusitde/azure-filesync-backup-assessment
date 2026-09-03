@@ -1,0 +1,47 @@
+%% Decision tree - map an on-premises share or volume to an Azure file share and a sync group - Contoso profile
+%% Source: Microsoft Learn Plan an Azure File Sync deployment (sync topology matrix, 30 shares per server) and Azure File Sync scale targets (read 2026-09-03); docs/RULES.md AFS-09, AFS-10, AFS-13, AFS-16, AFS-17
+flowchart TD
+  START["One Contoso share or volume to place - for example the dept file server volume D"] --> Q1{"Is the target Azure file share already the cloud endpoint of another sync group?"}
+  Q1 -->|yes| X1["STOP - a share can back exactly one sync group. Pick a different share or add this server to the existing sync group instead"]
+  Q1 -->|no| Q2{"Do several shares or volumes on THIS server have to land in ONE Azure file share?"}
+  Q2 -->|yes| X2["Unsupported as separate endpoints - a sync group allows only one server endpoint per registered server. Group the top-level folders under one common root and sync that root, or use volume sync"]
+  Q2 -->|no| Q3{"Will this server end up syncing more than 30 Azure file shares?"}
+  X2 --> Q3
+  Q3 -->|yes| X3["Consolidate with share grouping or volume sync, or split the data across a second registered file server. 30 server endpoints per server is a hard limit"]
+  Q3 -->|no| Q4{"More than 100 million files and folders in the resulting namespace?"}
+  X3 --> Q4
+  Q4 -->|yes| X4["Split into more sync groups and more Azure file shares. 100 million is a soft limit and 20 to 30 million per share is the practical target"]
+  Q4 -->|no| Q5{"Is the server path on the system volume C?"}
+  X4 --> Q5
+  Q5 -->|yes| X5["Move the endpoint to a data volume - cloud tiering is not supported on the system volume - rule AFS-09"]
+  Q5 -->|no| Q6{"Does the path nest inside or contain another server endpoint on the same server?"}
+  X5 --> Q6
+  Q6 -->|yes| X6["Unsupported - restructure to non-overlapping paths such as F sync1 and F sync2 in different sync groups - rule AFS-10"]
+  Q6 -->|no| Q7{"Is the path inside a DFS Replication replicated folder?"}
+  X6 --> Q7
+  Q7 -->|yes| X7["Only one server endpoint may overlap a DFS-R location, never a read-only replica, and cloud tiering must be OFF on that volume"]
+  Q7 -->|no| Q8{"Is the Storage Sync Service in the same region as the target storage account?"}
+  X7 --> Q8
+  Q8 -->|no| X8["Fix first - a cross-region pair costs latency and egress and can only be corrected by recreating the sync group - rule AFS-16"]
+  Q8 -->|yes| BUILD["Create sync group, then the cloud endpoint on the share, then the server endpoint"]
+  X8 --> BUILD
+
+  subgraph Contoso["Contoso landing pattern for this decision"]
+    SA[("StorageV2 account - ZRS or GRS - large file shares on - share soft delete 14 d")]
+    SH1["Azure file share: home"]
+    SH2["Azure file share: dept"]
+    SH3["Azure file share: archive"]
+    SG1["Sync group home"]
+    SG2["Sync group dept"]
+    SG3["Sync group archive"]
+    SA --- SH1
+    SA --- SH2
+    SA --- SH3
+    SH1 --- SG1
+    SH2 --- SG2
+    SH3 --- SG3
+  end
+  BUILD --> Contoso
+  BUILD --> AFTER["Then choose the tiering policy and the initial download policy for each server endpoint"]
+  NOTE["A sync group with zero server endpoints is a cloud-only group - remove it or attach the intended server - rule AFS-17"]
+  Contoso -.->|hygiene| NOTE

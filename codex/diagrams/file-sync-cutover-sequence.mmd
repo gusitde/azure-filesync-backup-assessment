@@ -1,0 +1,29 @@
+%% Azure File Sync private-path cut-over order with verification gates - Contoso profile
+%% Source: codex/playbook-enable-file-sync-private-endpoint-and-cutover.md and codex/playbook-harden-existing-storage-account.md
+sequenceDiagram
+  autonumber
+  participant OPS as eng-sysops
+  participant AZ as Azure (storage account, Storage Sync Service)
+  participant IB as Infoblox
+  participant SRV as Every registered server
+  OPS->>AZ: create private endpoint file + DNS zone group
+  OPS->>IB: forwarder privatelink.file.core.windows.net -> resolver inbound
+  OPS->>SRV: Resolve-DnsName account.file.core.windows.net
+  SRV-->>OPS: 10.x (gate 1 passed on every server)
+  OPS->>AZ: storage firewall Deny + bypass AzureServices + resource instance rule
+  OPS->>SRV: watch Telemetry 9102
+  SRV-->>OPS: HResult 0, cloud change enumeration completed (gate 2)
+  OPS->>AZ: create private endpoint afs (4 IPs) + DNS zone group
+  OPS->>IB: forwarder privatelink.afs.azure.net -> resolver inbound
+  OPS->>SRV: Debug-StorageSyncServer -TestNetworkConnectivity + Resolve-DnsName x4
+  SRV-->>OPS: all four names 10.x, connectivity OK (gate 3 on every server)
+  OPS->>AZ: optional Set-AzStorageSyncServiceIdentity (managed identity)
+  AZ-->>OPS: UseIdentity true, servers ActiveAuthType ManagedIdentity after 15 min
+  OPS->>AZ: Set-AzStorageSyncService -IncomingTrafficPolicy AllowVirtualNetworksOnly
+  OPS->>SRV: watch 9301 heartbeats and next 9102, recall a tiered file
+  alt healthy
+    SRV-->>OPS: heartbeats continue, HResult 0, recall OK (gate 4) -> 24 h soak, re-export and re-assess
+  else a server fails
+    OPS->>AZ: rollback Set-AzStorageSyncService -IncomingTrafficPolicy AllowAllTraffic
+    OPS->>IB: fix forwarder / zone record / endpoint approval, then repeat from gate 3
+  end

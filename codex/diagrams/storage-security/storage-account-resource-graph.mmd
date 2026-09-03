@@ -1,0 +1,117 @@
+%% Storage account security object graph - every resource that points at stmryfiles01 and the property that carries the reference
+%% Source: codex/blueprint-azure-files-secure-storage-account.md (Declared artifact registry) and codex/playbook-deploy-secure-storage-account-and-share.md (AVM avm/res/storage/storage-account 0.33.0 parameter set); Microsoft Learn - Customer-managed keys for account encryption; Recover a deleted storage account; Introduction to Defender for Storage malware scanning (StorageDataScanner resource instance)
+erDiagram
+  STORAGE_ACCOUNT ||--|| FILE_SERVICE : "fileServices default is a singleton child"
+  STORAGE_ACCOUNT ||--|| NETWORK_ACLS : "properties networkAcls"
+  STORAGE_ACCOUNT ||--o| KEY_POLICY : "properties keyPolicy"
+  STORAGE_ACCOUNT ||--o| ENCRYPTION : "properties encryption"
+  STORAGE_ACCOUNT ||--o| AD_IDENTITY : "azureFilesIdentityBasedAuthentication"
+  STORAGE_ACCOUNT ||--o{ PRIVATE_ENDPOINT_CONNECTION : "privateEndpointConnections, approval state lives here"
+  STORAGE_ACCOUNT ||--o{ MANAGEMENT_LOCK : "lock scope is the account resource id"
+  STORAGE_ACCOUNT ||--o{ DIAGNOSTIC_SETTING : "scope is the account or fileServices default"
+  STORAGE_ACCOUNT ||--o{ POLICY_ASSIGNMENT : "evaluated by scope inheritance, not by a stored pointer"
+  FILE_SERVICE ||--o{ FILE_SHARE : "fileServices default shares"
+  FILE_SERVICE ||--|| SMB_PROTOCOL_SETTINGS : "protocolSettings smb"
+  NETWORK_ACLS ||--o{ IP_RULE : "ipRules, max 400, public IPv4 only"
+  NETWORK_ACLS ||--o{ VNET_RULE : "virtualNetworkRules, max 400, needs a Microsoft.Storage service endpoint"
+  NETWORK_ACLS ||--o{ RESOURCE_ACCESS_RULE : "resourceAccessRules, resourceId plus tenantId"
+  RESOURCE_ACCESS_RULE }o--|| STORAGE_SYNC_SERVICE : "pinned to the Storage Sync Service resource id"
+  RESOURCE_ACCESS_RULE }o--o| STORAGE_DATA_SCANNER : "Defender adds its scanner here when the firewall is restricted"
+  PRIVATE_ENDPOINT_CONNECTION ||--|| PRIVATE_ENDPOINT : "one NIC in snet-pe, groupId file"
+  PRIVATE_ENDPOINT ||--|| DNS_ZONE_GROUP : "privateDnsZoneGroup binds the A record"
+  DNS_ZONE_GROUP }o--|| PRIVATE_DNS_ZONE : "privatelink.file.core.windows.net"
+  ENCRYPTION }o--o| KEY_VAULT_KEY : "keyvaultproperties, only when keySource is Microsoft.Keyvault"
+  ENCRYPTION }o--o| USER_ASSIGNED_IDENTITY : "identity.userAssignedIdentities wraps and unwraps the account key"
+  USER_ASSIGNED_IDENTITY }o--|| KEY_VAULT_KEY : "get, wrapKey and unwrapKey on the key"
+  DIAGNOSTIC_SETTING }o--|| LOG_ANALYTICS_WORKSPACE : "workspaceResourceId"
+  STORAGE_SYNC_SERVICE ||--o{ CLOUD_ENDPOINT : "cloud endpoint carries storageAccountResourceId and the share name"
+  CLOUD_ENDPOINT }o--|| FILE_SHARE : "one cloud endpoint per share per sync group"
+  RECOVERY_SERVICES_VAULT ||--o{ BACKUP_PROTECTED_ITEM : "AzureFileShare item under backupFabrics Azure"
+  BACKUP_PROTECTED_ITEM }o--|| FILE_SHARE : "snapshots are taken in the SOURCE account, not copied out"
+  AD_IDENTITY }o--|| AD_COMPUTER_OBJECT : "contoso.local computer account holds the cifs SPN"
+  DEFENDER_PLAN ||--o| STORAGE_DATA_SCANNER : "deployed with a system-assigned identity when scanning is on"
+
+  STORAGE_ACCOUNT {
+    string name "stmryfiles01"
+    string type "Microsoft.Storage/storageAccounts"
+    string kind "StorageV2"
+    string skuName "Standard_ZRS or Standard_GRS, never RA-GRS for Files"
+    string publicNetworkAccess "Enabled - Disabled would cut the trusted-services path"
+    bool allowSharedKeyAccess "true while File Sync has no managed identity and Backup protects shares"
+    bool supportsHttpsTrafficOnly "true - governs REST and HTTPS only"
+    string minimumTlsVersion "TLS1_2"
+    string largeFileSharesState "Enabled - irreversible, no cost"
+    bool allowCrossTenantReplication "false"
+  }
+  FILE_SERVICE {
+    string id "fileServices/default"
+    int shareDeleteRetentionDays "14 or more, range 1 to 365, default 7"
+    bool smbEncryptionInTransitRequired "Not selected on CLI and Bicep created accounts - set it explicitly"
+  }
+  SMB_PROTOCOL_SETTINGS {
+    string versions "SMB3.0 and SMB3.1.1 - default is SMB2.1 SMB3.0 SMB3.1.1"
+    string authenticationMethods "Kerberos once no client mounts with the key - default adds NTLMv2"
+    string kerberosTicketEncryption "AES-256 - default also allows RC4-HMAC"
+    string channelEncryption "AES-128-GCM and AES-256-GCM - default also allows AES-128-CCM"
+  }
+  FILE_SHARE {
+    string names "home-drives, dept-shares, archive"
+    int shareQuota "5120 to 10240 GiB"
+    string accessTier "TransactionOptimized or Cool"
+  }
+  NETWORK_ACLS {
+    string defaultAction "Deny"
+    string bypass "AzureServices"
+  }
+  IP_RULE {
+    string value "admin egress public IPv4 only - RFC1918 and /31 and /32 are rejected"
+  }
+  VNET_RULE {
+    string subnetResourceId "empty in Contoso baseline - on-premises servers are not in a VNet"
+  }
+  RESOURCE_ACCESS_RULE {
+    string resourceId "the Storage Sync Service resource id"
+    string tenantId "Contoso Entra tenant - same tenant only"
+  }
+  KEY_POLICY {
+    int keyExpirationPeriodInDays "180 - settable only after BOTH keys were rotated once"
+    bool enableAutoRotation "false - Azure never rotates the account keys for you"
+  }
+  ENCRYPTION {
+    string keySource "Microsoft.Storage by default, Microsoft.Keyvault for CMK"
+    bool requireInfrastructureEncryption "creation-time only - it cannot be added to a live account"
+  }
+  KEY_VAULT_KEY {
+    string keyType "RSA or RSA-HSM, size 2048, 3072 or 4096"
+    bool vaultSoftDelete "required"
+    bool vaultPurgeProtection "required"
+    string version "omit it to auto-update - Azure Storage checks once a day"
+  }
+  PRIVATE_ENDPOINT {
+    string groupId "file"
+    string nic "one 10.x address in snet-pe-region-01"
+    string warning "deleted with the account and NOT recreated by an account restore"
+  }
+  PRIVATE_DNS_ZONE {
+    string name "privatelink.file.core.windows.net"
+    string forwarder "Infoblox grid forwards this zone to the resolver inbound endpoint"
+  }
+  MANAGEMENT_LOCK {
+    string level "CanNotDelete"
+    string why "account recovery is best effort and only inside 14 days"
+  }
+  DIAGNOSTIC_SETTING {
+    string categories "StorageRead, StorageWrite, StorageDelete on fileServices default"
+    string metric "Transaction"
+  }
+  POLICY_ASSIGNMENT {
+    string set "eleven Storage built-ins by GUID at the landing-zone management group"
+  }
+  AD_IDENTITY {
+    string directoryServiceOptions "AD"
+    string activeDirectoryProperties "domainName contoso.local, domainSid, forestName, netBiosDomainName"
+  }
+  AD_COMPUTER_OBJECT {
+    string ou "OU=AzureFiles in contoso.local"
+    string kerberosEncryptionType "AES256, password expiry disabled"
+  }

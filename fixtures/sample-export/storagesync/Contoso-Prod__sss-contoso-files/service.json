@@ -1,0 +1,15 @@
+{
+ "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files",
+ "name": "sss-contoso-files",
+ "type": "Microsoft.StorageSync/storageSyncServices",
+ "location": "westus2",
+ "tags": {},
+ "properties": {
+  "incomingTrafficPolicy": "AllowAllTraffic",
+  "storageSyncServiceStatus": 0,
+  "storageSyncServiceUid": "sss-uid",
+  "provisioningState": "Succeeded",
+  "privateEndpointConnections": [],
+  "useIdentity": false
+ }
+}

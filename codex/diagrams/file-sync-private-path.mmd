@@ -1,0 +1,24 @@
+%% Azure File Sync over ExpressRoute - the three legs and who initiates them - Contoso profile
+%% Source: codex/blueprint-azure-file-sync-private-path.md (Microsoft Learn: Configure Azure File Sync network endpoints; Azure File Sync firewall and proxy settings)
+flowchart LR
+  subgraph Contoso[Contoso network]
+    FS[Registered file server - agent v20+]
+    IB[("Infoblox - forwarders for privatelink.afs.azure.net and privatelink.file.core.windows.net")]
+  end
+  subgraph ER[ExpressRoute private peering]
+    CKT[circuit + gateway]
+  end
+  subgraph Spoke[Private-endpoint spoke]
+    PE1["Private endpoint afs - 4 IPs: management, sync primary, sync secondary, monitoring"]
+    PE2[Private endpoint file - 1 IP]
+  end
+  SSS[Storage Sync Service - incomingTrafficPolicy AllowVirtualNetworksOnly - useIdentity true]
+  SA[("Storage account - Deny + AzureServices bypass")]
+  BK[Azure Backup]
+  PUB((Public - Entra ID, ARM, PKI, Microsoft Update))
+  FS -->|leg 1: sync control and metadata HTTPS 443| CKT --> PE1 --> SSS
+  FS -->|leg 2: file data and recalls HTTPS 443 FileREST| CKT --> PE2 --> SA
+  SSS -->|leg 3: change enumeration and cloud endpoint ops - trusted services - Microsoft network, cannot be moved to ExpressRoute| SA
+  BK -->|snapshots and vault transfer - Azure-internal| SA
+  FS -.->|identity, ARM, certificate, agent update| PUB
+  IB -.->|resolves legs 1 and 2 to private IPs| Spoke

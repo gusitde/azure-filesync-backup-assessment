@@ -1,0 +1,50 @@
+%% One sync session end to end - server change detection by USN journal, cloud change detection by the 24 hour enumeration job, and the failure branches
+%% Source: Microsoft Learn "Troubleshoot Azure File Sync sync health and errors" (9102 fields SyncDirection HResult PerItemErrorCount, 9302 progress, change detection job every 24 hours, reconciliation mode, sync blocked until change detection completes after a restore), "Deploy Azure File Sync" (LocalCacheMode), read 2026-09-03; docs/RULES.md AFS-01, AFS-02, AFS-03, AFS-08, SRV-06
+sequenceDiagram
+  autonumber
+  participant U as Contoso user on SMB 445
+  participant FLT as StorageSync.sys filter driver
+  participant SVC as FileSyncSvc on the endpoint server
+  participant SSS as Storage Sync Service over the afs private endpoint
+  participant SHARE as Azure file share over the file private endpoint
+  participant SRV2 as Second server endpoint in the same sync group
+  participant OPS as eng-sysops
+
+  Note over U,SHARE: Upload path - a change on the server is detected in minutes
+  U->>FLT: write dept budget file over SMB
+  FLT->>SVC: NTFS USN journal record
+  SVC->>SSS: open upload sync session, send namespace and metadata over HTTPS 443
+  SVC->>SHARE: upload the file stream with FileREST over HTTPS 443
+  SVC->>SVC: log 9302 progress with TotalItemCount and AppliedItemCount every few minutes
+  SSS-->>SVC: session complete
+  SVC->>OPS: telemetry 9102 SyncDirection Upload, HResult 0, PerItemErrorCount 0
+
+  Note over SSS,SRV2: Download path - other endpoints learn about it from the service
+  SSS->>SRV2: download sync session for the new item
+  alt cloud tiering enabled and LocalCacheMode is the default UpdateLocallyCachedFiles
+    SRV2->>SRV2: the file appears as a tiered namespace item, content is fetched only on first open
+  else LocalCacheMode DownloadNewAndModifiedFiles - proactive recall
+    SRV2->>SHARE: recall the full content immediately, paying egress before anyone asks for it
+  end
+
+  Note over OPS,SHARE: Cloud path - a change made in the share is NOT detected in minutes
+  OPS->>SHARE: copy files straight into the share, or Azure Backup restores an item
+  SHARE--)SSS: no change notification exists, Azure Files has no journal
+  loop every 24 hours
+    SSS->>SHARE: change detection job enumerates every file and compares it to the sync version
+  end
+  SSS->>SVC: sync session for whatever the enumeration found
+  OPS->>SSS: Invoke-AzStorageSyncChangeDetection to force it after a bulk change
+  Note over SSS,SHARE: On a large namespace one pass can take longer than 24 hours, and after a restore sync stays blocked until enumeration completes
+
+  Note over SVC,OPS: Failure branches
+  alt PerItemErrorCount greater than zero, HResult still 0
+    SVC->>OPS: 9121 per item errors - unsupported characters, path over 2048, open handles
+    OPS->>SVC: Debug-StorageSyncServer -FileSyncErrorsReport, fix at source, sync retries by itself
+  else session HResult non zero
+    OPS->>SVC: read the 9102 HResult, then check the storage firewall, DNS and the agent version
+    Note over SVC,SSS: watch the Applied counts - rising AppliedFileCount across failing sessions means forward progress, so wait before opening a case
+  else ECS_E_REPLICA_RECONCILIATION_NEEDED
+    SVC->>SSS: the server was restored to an older state, sync enters reconciliation
+    Note over SVC,SHARE: regular sync stops until reconciliation finishes and differing files become conflict files stored side by side
+  end

@@ -1,0 +1,45 @@
+%% Every traffic leg in Contoso estate - who initiates it, whether it can be made private, and who owns the control
+%% Source: codex/blueprint-azure-file-sync-private-path.md steps 1 and 8; codex/blueprint-azure-files-backup-protection.md "Why ExpressRoute is not involved"; Assess-AzFileSyncExport.ps1 rules NET-05 to NET-11, SEC-04, AFS-14; Microsoft Learn - Configure Azure File Sync network endpoints, Trusted Azure services for Azure Storage, Back up Azure Files FAQ, Private endpoints overview for Azure Backup
+flowchart TB
+  subgraph L1["Lane 1 - Contoso initiates - CAN be made private over ExpressRoute private peering"]
+    A1["Agent to Storage Sync Service. HTTPS 443 to four names under privatelink.afs.azure.net. Control is a private endpoint sub-resource Afs plus incomingTrafficPolicy AllowVirtualNetworksOnly. Assessor NET-05 and NET-07"]
+    A2["Agent to storage account file endpoint. HTTPS 443 FileREST for upload, download and recall. Control is a private endpoint sub-resource file plus networkAcls.defaultAction Deny. Assessor NET-06 and NET-08"]
+    A3["Workstation or application mounting the share directly. SMB 445 with Kerberos. Same file private endpoint. Most ISPs block outbound 445, so private is the only reliable path"]
+    A4["Infoblox grid to Azure. UDP and TCP 53 to the DNS Private Resolver inbound endpoint for the privatelink zones. Assessor NET-11"]
+    A5["Azure VM to contoso.local. UDP and TCP 53 out of the resolver outbound endpoint to the Infoblox grid members"]
+  end
+
+  subgraph L2["Lane 2 - Microsoft initiates inside Azure - NO private endpoint applies - CANNOT be moved onto the circuit"]
+    B1["Storage Sync Service to storage account. Cloud change enumeration and cloud endpoint operations. Carried on the trusted-services path. Control is networkAcls.bypass AzureServices. Remove it and assessor AFS-14 fires while server sync sessions still look healthy"]
+    B2["Azure Backup to storage account. Snapshot create, lease, delete and restore. Snapshots stay in the same storage account, so zero bytes cross any network. Control is bypass AzureServices plus allowSharedKeyAccess true. Assessor NET-09 and SEC-04"]
+    B3["Storage account replication for ZRS or GRS. Azure-internal by definition. Contoso has no control surface here at all"]
+  end
+
+  subgraph L3["Lane 3 - stays on the public internet after cut-over - keep these firewall rules forever"]
+    C1["Microsoft Entra ID and ARM. HTTPS 443 to login.microsoftonline.com, login.windows.net and management.azure.com. Azure Backup private endpoints explicitly exclude Entra ID"]
+    C2["Microsoft PKI and OCSP for the File Sync agent certificate"]
+    C3["Microsoft Update for the agent. Auto-update InstallLatest inside a maintenance window"]
+    C4["Administrator browser to the storage data plane. The portal file browser is a separate request that needs its own IP network rule or it returns 403 while portal.azure.com loads fine"]
+  end
+
+  subgraph OWN["Who owns each control"]
+    O1["Contoso - circuit, private peering, gateway, peering pair, snet-pe-region-01, Infoblox forwarders and IPAM, edge firewall"]
+    O2["Microsoft - the trusted-services path, the storage replication fabric, the four afs host names, the snapshot engine"]
+    O3["Consultant - the order of operations, the gate at each step, the assessor evidence before and after, and the rollback command that is typed before the change is made"]
+  end
+
+  A1 -.->|"Contoso builds and verifies"| O1
+  A2 -.->|"Contoso builds and verifies"| O1
+  A3 -.->|"Contoso builds and verifies"| O1
+  A4 -.->|"Contoso builds and verifies"| O1
+  A5 -.->|"Contoso builds and verifies"| O1
+  B1 -.->|"Contoso can only keep the bypass open"| O2
+  B2 -.->|"Contoso can only keep the bypass and key access open"| O2
+  B3 -.->|"no lever exists"| O2
+  L1 -.->|"sequenced by"| O3
+  L2 -.->|"explained to the customer by"| O3
+  L3 -.->|"allow-listed by"| O3
+
+  VERDICT["What Contoso can assert after cut-over - every agent-initiated and every user-initiated file byte is on the ExpressRoute circuit. What it must NOT assert - that no Microsoft-internal traffic reaches the storage account. Lane 2 is not Contoso's to move, and any design that claims otherwise is wrong"]
+  L1 --> VERDICT
+  L2 --> VERDICT

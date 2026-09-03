@@ -1,0 +1,77 @@
+﻿#Requires -Version 5.1
+<#
+  tests/run-tests.ps1 - proves the assessor against the synthetic fixture.
+  Every deliberate defect in fixtures/make-fixture.py maps to a rule id; this script asserts
+  the expected ids fire, the not-expected ids stay silent, and the private-routing switch
+  adds exactly the NET-05.. checks. Exit code 0 = all green.
+#>
+$ErrorActionPreference = 'Stop'
+$repo = Split-Path $PSScriptRoot -Parent
+$assess = Join-Path $repo 'Assess-AzFileSyncExport.ps1'
+$fixture = Join-Path $repo 'fixtures\sample-export'
+if (-not (Test-Path (Join-Path $fixture 'manifest.json'))) { throw "fixture missing - run: python fixtures/make-fixture.py" }
+$tmp = Join-Path $env:TEMP ("afs-tests-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+$fail = 0
+function Check([bool]$ok, [string]$what) { if ($ok) { Write-Host "  PASS  $what" } else { Write-Host "  FAIL  $what" -ForegroundColor Red; $script:fail++ } }
+
+# -- 1. catalog --------------------------------------------------------------------------
+Write-Host '1. rule catalog'
+$cat = & $assess -ListRules
+$ids = @([regex]::Matches(($cat -join "`n"), '(?m)^\| ((?:AFS|TIER|SEC|DATA|BKP|NET|MON|OPS|SRV)-\d\d) \|') | ForEach-Object { $_.Groups[1].Value })
+Check ($ids.Count -ge 80) "catalog lists $($ids.Count) rules (>= 80)"
+Check (($ids | Group-Object | Where-Object { $_.Count -gt 1 }).Count -eq 0) 'rule ids are unique'
+
+# -- 2. default mode ----------------------------------------------------------------------
+Write-Host '2. default assessment on the fixture'
+$out1 = Join-Path $tmp 'default'
+& $assess -ExportPath $fixture -OutputPath $out1 -CustomerName 'Fixture Contoso' | Out-Null
+$f1 = (Get-Content (Join-Path $out1 'findings.json') -Raw | ConvertFrom-Json)
+$got = @($f1.findings | ForEach-Object { $_.id } | Select-Object -Unique)
+$expected = @('AFS-01', 'AFS-02', 'AFS-03', 'AFS-04', 'AFS-05', 'AFS-06', 'AFS-07', 'AFS-08', 'AFS-09', 'AFS-10', 'AFS-12', 'AFS-15', 'AFS-17', 'AFS-18',
+  'TIER-01', 'TIER-02', 'TIER-03', 'TIER-04', 'TIER-05', 'TIER-06',
+  'SEC-02', 'SEC-03', 'SEC-04', 'SEC-06', 'SEC-07', 'SEC-08', 'SEC-09', 'SEC-10', 'SEC-11', 'SEC-13', 'SEC-14',
+  'DATA-01', 'DATA-02', 'DATA-03', 'DATA-05', 'DATA-06',
+  'BKP-01', 'BKP-02', 'BKP-03', 'BKP-04', 'BKP-05', 'BKP-06', 'BKP-07', 'BKP-08', 'BKP-09', 'BKP-11', 'BKP-12', 'BKP-13', 'BKP-16', 'BKP-17', 'BKP-19',
+  'NET-01', 'MON-01', 'MON-02', 'MON-03', 'OPS-01', 'OPS-03',
+  'SRV-02', 'SRV-03', 'SRV-04', 'SRV-06', 'SRV-07', 'SRV-08', 'SRV-09', 'SRV-11')
+$notExpected = @('AFS-11', 'AFS-13', 'AFS-14', 'AFS-16', 'AFS-19', 'SEC-01', 'SEC-05', 'SEC-12', 'SEC-15', 'DATA-04', 'DATA-07', 'BKP-10', 'BKP-14', 'BKP-15', 'BKP-18',
+  'NET-02', 'NET-03', 'NET-04', 'NET-05', 'NET-06', 'NET-07', 'NET-08', 'NET-09', 'NET-10', 'NET-11', 'OPS-02', 'SRV-01', 'SRV-05', 'SRV-10')
+foreach ($id in $expected) { Check ($got -contains $id) "fires $id" }
+foreach ($id in $notExpected) { Check (-not ($got -contains $id)) "silent $id" }
+$net01 = @($f1.findings | Where-Object { $_.id -eq 'NET-01' })[0]
+Check ($net01.severity -eq 'Info') 'NET-01 is Info without -PrivateTrafficRequired'
+$bkp01 = @($f1.findings | Where-Object { $_.id -eq 'BKP-01' })
+Check ($bkp01.Count -eq 3) "BKP-01 fires for the 3 unprotected shares (got $($bkp01.Count))"
+Check (@($bkp01 | Where-Object { $_.resource -eq 'stcontosofiles01/home-drives' -and $_.evidence -like '*Azure File Sync cloud endpoint*' }).Count -eq 1) 'BKP-01 flags the File Sync cloud endpoint share explicitly'
+$d3 = @($f1.findings | Where-Object { $_.id -eq 'DATA-03' -and $_.resource -eq 'stcontosofiles01/home-drives' })[0]
+Check ($d3.severity -eq 'High') 'DATA-03 is High at 96 % usage'
+$a5 = @($f1.findings | Where-Object { $_.id -eq 'AFS-05' })
+Check ((@($a5 | Where-Object { $_.resource -like '*FS02*' -and $_.severity -eq 'High' }).Count -eq 1) -and (@($a5 | Where-Object { $_.resource -like '*FS01*' -and $_.severity -eq 'Medium' }).Count -eq 1)) 'AFS-05: FS02 expired = High, FS01 expiring = Medium'
+Check ((@($f1.findings | Where-Object { $_.id -eq 'OPS-03' }).Count -eq 2)) 'OPS-03 for the two servers without a bundle (FS02, FS03)'
+Check ((Test-Path (Join-Path $out1 'assessment.md')) -and ((Get-Content (Join-Path $out1 'assessment.md') -Raw) -match '## High findings')) 'assessment.md written with a High section'
+
+# -- 3. private routing mode -----------------------------------------------------------------
+Write-Host '3. assessment with -PrivateTrafficRequired'
+$out2 = Join-Path $tmp 'private'
+& $assess -ExportPath $fixture -OutputPath $out2 -CustomerName 'Fixture Contoso' -PrivateTrafficRequired | Out-Null
+$f2 = (Get-Content (Join-Path $out2 'findings.json') -Raw | ConvertFrom-Json)
+$got2 = @($f2.findings | ForEach-Object { $_.id } | Select-Object -Unique)
+foreach ($id in @('NET-05', 'NET-06', 'NET-09', 'NET-10', 'NET-11')) { Check ($got2 -contains $id) "private mode fires $id" }
+foreach ($id in @('NET-07', 'NET-08')) { Check (-not ($got2 -contains $id)) "private mode silent $id (no private endpoint yet)" }
+$net01b = @($f2.findings | Where-Object { $_.id -eq 'NET-01' })[0]
+Check ($net01b.severity -eq 'High') 'NET-01 escalates to High with -PrivateTrafficRequired'
+
+# -- 4. zip input --------------------------------------------------------------------------
+Write-Host '4. zip input'
+$zip = Join-Path $tmp 'fixture.zip'
+Compress-Archive -Path (Join-Path $fixture '*') -DestinationPath $zip -Force
+$out3 = Join-Path $tmp 'zip'
+& $assess -ExportPath $zip -OutputPath $out3 | Out-Null
+$f3 = (Get-Content (Join-Path $out3 'findings.json') -Raw | ConvertFrom-Json)
+Check ($f3.counts.High -eq $f1.counts.High -and $f3.counts.Medium -eq $f1.counts.Medium) 'zip and folder inputs give identical counts'
+
+Write-Host ''
+if ($fail -eq 0) { Write-Host "ALL GREEN ($($expected.Count + $notExpected.Count + 14) checks)" -ForegroundColor Green } else { Write-Host "$fail check(s) FAILED" -ForegroundColor Red }
+Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+exit $fail

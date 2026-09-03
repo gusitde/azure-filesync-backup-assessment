@@ -1,0 +1,74 @@
+%% Azure Migrate over Private Link - the resource graph, who creates each object and how they reference each other - Contoso profile
+%% Source: codex/blueprint-azure-migrate-private-link-landing.md (Zone and endpoint map) + codex/playbook-azure-migrate-private-link-cache-storage.md; Microsoft Learn "Migrate servers to Azure by using Private Link"
+erDiagram
+  MIGRATE_PROJECT ||--|| PE_PROJECT : "Default sub-resource"
+  MIGRATE_PROJECT ||--|| KEY_VAULT : "Azure creates at key generation"
+  MIGRATE_PROJECT ||--|| USAGE_STORAGE : "Azure creates at key generation"
+  MIGRATE_PROJECT ||--|| RSV_REPLICATION : "Azure creates for agentless VMware"
+  MIGRATE_PROJECT ||--o{ APPLIANCE : "registered with the project key"
+  KEY_VAULT ||--|| PE_KEYVAULT : "vault sub-resource"
+  USAGE_STORAGE ||--|| PE_USAGE : "blob sub-resource"
+  RSV_REPLICATION ||--|| PE_SITERECOVERY : "AzureSiteRecovery sub-resource"
+  CACHE_STORAGE ||--|| PE_CACHE_BLOB : "blob sub-resource"
+  RSV_REPLICATION ||--o{ ROLE_ASSIGNMENT : "vault managed identity"
+  CACHE_STORAGE ||--o{ ROLE_ASSIGNMENT : "scope of the grant"
+  PE_PROJECT ||--|| ZONE_MIGRATION : "DNS zone group writes A records"
+  PE_KEYVAULT ||--|| ZONE_VAULTCORE : "DNS zone group writes A records"
+  PE_USAGE ||--|| ZONE_BLOB : "DNS zone group writes A records"
+  PE_CACHE_BLOB ||--|| ZONE_BLOB : "DNS zone group writes A records"
+  PE_SITERECOVERY ||--|| ZONE_SITERECOVERY : "five asr-pod01 names"
+  ZONE_MIGRATION ||--o{ INFOBLOX_FORWARDER : "conditional forward to the resolver inbound endpoint"
+  ZONE_VAULTCORE ||--o{ INFOBLOX_FORWARDER : "conditional forward to the resolver inbound endpoint"
+  ZONE_BLOB ||--o{ INFOBLOX_FORWARDER : "conditional forward to the resolver inbound endpoint"
+  ZONE_SITERECOVERY ||--o{ INFOBLOX_FORWARDER : "conditional forward to the resolver inbound endpoint"
+  APPLIANCE ||--o{ INFOBLOX_FORWARDER : "resolves every FQDN in Download DNS settings"
+  PE_SUBNET ||--o{ PE_PROJECT : "up to 15 addresses for the project endpoints"
+  PE_SUBNET ||--o{ PE_CACHE_BLOB : "same spoke or a connected VNet"
+
+  MIGRATE_PROJECT {
+    string connectivity_method "Private endpoint - immutable after creation"
+    string public_network_access "Enabled so partner tools can still upload usage data"
+    string created_via "portal or REST - PowerShell does not support the private link option"
+  }
+  APPLIANCE {
+    string install_media "installer script only - no OVA or VHD for a private project"
+    string dns_requirement "hosts file is testing only - production resolves through Infoblox"
+    string proxy_rule "bypass entries for every private link FQDN"
+  }
+  CACHE_STORAGE {
+    string owner "Contoso - Azure Migrate does not create it"
+    string kind "StorageV2 - private endpoints are only supported on GPv2"
+    string sku "Standard - a Premium replication account needs a second Standard cache account"
+    string pe_sub_resource "blob only - the only cache sub-resource Azure Migrate documents"
+    string firewall "defaultAction Deny with bypass AzureServices"
+    string instance_rule "Microsoft.RecoveryServices/vaults if the bypass is ever removed"
+    string tls "TLS 1.2 minimum and HTTPS only"
+  }
+  ROLE_ASSIGNMENT {
+    string role_standard "Contributor plus Storage Blob Data Contributor"
+    string role_premium "Contributor plus Storage Blob Data Owner"
+    string principal "Recovery Services vault system-assigned managed identity"
+  }
+  ZONE_MIGRATION {
+    string name "privatelink.prod.migration.windowsazure.com"
+    string created_by "Azure Migrate in the project resource group"
+    string warning "never two zones of the same name linked to one VNet"
+  }
+  ZONE_VAULTCORE {
+    string name "privatelink.vaultcore.azure.net"
+  }
+  ZONE_BLOB {
+    string name "privatelink.blob.core.windows.net"
+    string shared_with "usage storage account and Contoso cache account"
+  }
+  ZONE_SITERECOVERY {
+    string name "privatelink.siterecovery.windowsazure.com"
+    string records "five vault-id-asr-pod01-type.geo names"
+  }
+  PE_SUBNET {
+    string reachability "reachable from Contoso over ExpressRoute private peering"
+  }
+  INFOBLOX_FORWARDER {
+    string scope "forward the privatelink zones only - never all of core.windows.net"
+    string target "Azure DNS Private Resolver inbound endpoint in the hub"
+  }

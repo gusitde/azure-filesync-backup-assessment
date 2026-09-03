@@ -1,0 +1,46 @@
+%% What you can and cannot enforce on a private-endpoint subnet - the four privateEndpointNetworkPolicies values, the /32 system route and the NSG caveats
+%% Source: Microsoft Learn - Manage network policies for private endpoints (Disabled, NetworkSecurityGroupEnabled, RouteTableEnabled, Enabled; UDR prefix rule); What is a private endpoint (NSG and UDR limitations, SNAT recommendation); Azure virtual network traffic routing (longest prefix match, route priority)
+flowchart TB
+  subgraph SUB["snet-pe-region-01 - the shared private-endpoint subnet, /26"]
+    POL{"privateEndpointNetworkPolicies on the subnet"}
+    POL -->|"Disabled - the platform default and Contoso posture"| D["No NSG and no UDR is applied to private endpoints in this subnet. Other resources in the subnet are still governed by the NSG"]
+    POL -->|"NetworkSecurityGroupEnabled"| N["NSG rules apply to traffic destined for the endpoints"]
+    POL -->|"RouteTableEnabled"| R["User-defined routes may override the endpoint route, subject to the prefix rule below"]
+    POL -->|"Enabled"| B["Both NSG and route table apply"]
+  end
+
+  subgraph ROUTE["Routing to the endpoint"]
+    SYS["System route - one /32 per private endpoint NIC, installed automatically"]
+    LPM["Azure selects by longest prefix match, then by priority user-defined route, then BGP, then system"]
+    OVR["To steer endpoint traffic at a firewall the UDR prefix length must be equal to or longer than the VNet address space prefix. In 10.51.0.0/16 that means /16 or longer, for example 10.51.4.0/24"]
+    NOOVR["A 0.0.0.0/0 UDR does NOT override the endpoint route - it is a broader range, so longest prefix match still picks the /32"]
+    SNAT["If a UDR does send endpoint traffic through an NVA, SNAT it so return traffic is honoured, or set the disableSnatOnPL tag on the appliance"]
+  end
+
+  subgraph NSGCAV["NSG caveats you must design around"]
+    C1["Effective routes and effective security rules are not shown for a private endpoint NIC in the portal - you cannot verify by reading the blade"]
+    C2["NSG flow logs are unavailable for inbound traffic destined to a private endpoint - no flow evidence for the SMB session"]
+    C3["Source port filtering is interpreted as any - write rules on source prefix, destination prefix and destination port only"]
+    C4["An application security group tied to the NSG holds at most 50 IP configurations"]
+    C5["Destination port ranges are capped as sources times destinations times port ranges up to 250 thousand"]
+  end
+
+  RULES["Contoso rule set if NSG enforcement is turned on - allow TCP 445 and TCP 443 from Contoso prefixes and from the hub, deny the rest. Outbound rules are meaningless here - a private endpoint never originates a connection"]
+
+  R --> OVR
+  B --> OVR
+  OVR --> LPM
+  NOOVR --> LPM
+  SYS --> LPM
+  OVR --> SNAT
+  N --> RULES
+  B --> RULES
+  RULES --- C1
+  RULES --- C2
+  RULES --- C3
+  RULES --- C4
+  RULES --- C5
+
+  VERDICT["Contoso verdict - keep privateEndpointNetworkPolicies Disabled on snet-pe-region-01 and enforce at Contoso edge firewall, where flow logging actually works. Revisit only if a policy requires inspection of the SMB path"]
+  D --> VERDICT
+  C2 --> VERDICT

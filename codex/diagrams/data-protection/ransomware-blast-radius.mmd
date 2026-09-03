@@ -1,0 +1,67 @@
+%% Blast radius of a ransomware or malicious-insider event on Contoso estate - what each stolen credential reaches, and the exact control that stops it
+%% Source: codex/runbook-restore-file-share-and-share-soft-delete.md class 3, codex/blueprint-azure-files-backup-protection.md; Microsoft Learn "About Azure Files backup" (lease), "Secure by default with soft delete" (operational backups of Azure Files not covered), "Immutable vault" (does not apply to operational backups), "Azure file share soft delete", "Multiuser authorization using Resource Guard" (read 2026-09-03)
+flowchart TB
+
+  subgraph ORIGIN["Blast origin - one compromised principal"]
+    A1["A. Contoso user or service account<br/>with write on the department share"]
+    A2["B. Storage account key, or a role holding<br/>Microsoft.Storage/storageAccounts/write"]
+    A3["C. Backup admin - Backup Contributor on rsv-contoso-westus"]
+    A4["D. Subscription Owner on the storage subscription"]
+  end
+
+  subgraph REACH["What the credential actually reaches"]
+    R1["Encrypts files on the server endpoint<br/>File Sync uploads the encrypted versions<br/>the live share content is now bad"]
+    R2["Deletes the file share<br/>or rotates and revokes keys"]
+    R3["Deletes share snapshots"]
+    R4["Stop protection with delete data<br/>Modify policy to reduce retention<br/>Disable soft delete<br/>Disable immutability<br/>Delete the vault"]
+    R5["Deletes the storage account<br/>or the whole resource group"]
+  end
+
+  subgraph CONTAIN["What contains it - and where the containment ends"]
+    C1["Share snapshots taken every 4 h<br/>read-only point-in-time - encryption does NOT reach backwards<br/>up to 200 recovery points per share"]
+    C2["Share soft delete at the account level<br/>undelete returns the share AND all its snapshots<br/>Contoso setting 14 days, Backup sets it on enable"]
+    C3["Infinite lease taken by Azure Backup on every snapshot<br/>deleting a share with leased snapshots is no longer one click"]
+    C4["Secure by default - GA on Recovery Services vaults<br/>Disable soft delete is refused for EVERY module and API version<br/>soft-delete retention 14 to 180 days"]
+    C5["Immutable vault Enabled and locked<br/>blocks delete-data, retention reduction and policy downgrade<br/>locking is irreversible by design"]
+    C6["MUA Resource Guard in a SECOND subscription<br/>backup admin holds Reader only<br/>Backup MUA Operator granted just in time through PIM"]
+    C7["CanNotDelete lock on the account and the vault<br/>plus vault soft delete - a vault with soft-deleted items<br/>goes to a soft-deleted state instead of vanishing"]
+    C8["Vault-standard copy in the vault, replicated to East US<br/>offsite, no dependency on the source account surviving"]
+  end
+
+  subgraph GAP["The two real gaps - state them to Contoso, do not paper over them"]
+    G1["The SNAPSHOT tier is an OPERATIONAL backup.<br/>Vault soft delete and vault immutability do NOT apply to it.<br/>Snapshots live in the source storage account and therefore share<br/>the account's blast radius and its identity boundary."]
+    G2["Permanent share deletion is a 3-step bypass, not a wall.<br/>Undelete the share, disable file-share soft delete on the account,<br/>delete it again. Nothing in Azure Backup sees this - it is a<br/>data-plane action. Only RBAC, the CanNotDelete lock and Azure Policy<br/>stand in the way."]
+  end
+
+  VAULTONLY["Vault-standard recovery points<br/>separate fault domain, separate identity domain<br/>the only copy that survives losing the storage account"]
+
+  A1 --> R1
+  A2 --> R2
+  A2 --> R3
+  A3 --> R4
+  A4 --> R5
+  A4 --> R4
+
+  R1 -->|"contained by"| C1
+  R2 -->|"contained by"| C2
+  R2 -->|"slowed by"| C3
+  R3 -->|"slowed by"| C3
+  R3 -.->|"NOT contained by vault controls"| G1
+  R4 -->|"refused outright"| C4
+  R4 -->|"blocked while locked"| C5
+  R4 -->|"needs a second human"| C6
+  R5 -->|"delayed by"| C7
+  R5 -->|"14 day best-effort account restore only"| G1
+  C2 -.->|"can be unwound by the same principal"| G2
+
+  C1 --> VAULTONLY
+  C5 --> VAULTONLY
+  C6 --> VAULTONLY
+  C8 --> VAULTONLY
+
+  VAULTONLY --> OUT["Recovery of last resort<br/>full share restore to an ALTERNATE location<br/>or cross-region restore in East US<br/>RTO is hours, not minutes - design the RPO around that"]
+
+  classDef gap fill:#f6e2e2,stroke:#a33,stroke-width:2px
+  classDef good fill:#e4f0e4,stroke:#3a6,stroke-width:1px
+  class G1,G2 gap
+  class C1,C2,C3,C4,C5,C6,C7,C8,VAULTONLY good

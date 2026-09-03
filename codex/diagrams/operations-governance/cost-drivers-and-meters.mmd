@@ -1,0 +1,54 @@
+%% Cost anatomy - which operational act lands on which billing meter, for Contoso File Sync and Backup estate
+%% Source: Microsoft Learn "Understand Azure Files billing" pay-as-you-go meters, transaction buckets and the value-added services section for File Sync, Azure Backup and Defender for Storage; "About Azure Files backup" backup costs; "Plan an Azure File Sync deployment" antivirus and data-classification recall sections; ExpressRoute FAQ on egress data transfer. All read 2026-09-03
+flowchart LR
+  subgraph ACT["What actually happens each day"]
+    U1["Users write and change files on the server endpoints"]
+    U2["Cloud tiering recalls a tiered file to the server"]
+    U3["Cloud change enumeration - one full scan of each share every 24 h"]
+    U4["Azure Backup takes a snapshot every 4 h"]
+    U5["Vault-standard transfer of the last daily snapshot"]
+    U6["A share, or a file inside it, is restored"]
+    U7["Every registered server after the first stays registered"]
+    U8["Defender for Storage inspects the data plane"]
+    U9["GRS replicates writes to the paired region"]
+  end
+  subgraph MET["Azure Files pay-as-you-go meters on the storage account"]
+    M1["Data Stored - live share plus DIFFERENTIAL snapshots plus soft-deleted shares, in GiB"]
+    M2["Metadata - ACLs and properties, hot and cool access tiers only"]
+    M3["Write Operations - buckets of 10000 transactions"]
+    M4["List Operations - buckets of 10000 transactions"]
+    M5["Read Operations - buckets of 10000 transactions"]
+    M6["Other or Protocol Operations - buckets of 10000 transactions"]
+    M7["Data Retrieval - GiB read back, COOL access tier only, so the archive share pays it"]
+    M8["Geo-Replication Data Transfer - GiB written and replicated, GRS and GZRS only"]
+  end
+  subgraph OTH["Meters that are not on the Files bill"]
+    N1["Azure File Sync server registration fee - flat monthly charge for EACH server after the first"]
+    N2["Azure Backup protected instance fee - one instance equals 250 GiB of protected share data per storage account, fractional below that"]
+    N3["Defender for Storage transaction rate - billed under Defender, charged even on provisioned shares"]
+    N4["ExpressRoute egress - on a metered Standard or Premium circuit outbound bytes are billed by the circuit, an ExpressRoute Local circuit includes them"]
+  end
+  U1 -->|"changed bytes replicated to the share"| M1
+  U1 -->|"uploads and tiered-file management"| M3
+  U2 -->|"reads from the share"| M5
+  U2 -->|"cool tier only"| M7
+  U2 -->|"bytes leave Azure toward Contoso"| N4
+  U3 -->|"one ListFiles per DIRECTORY per day, the single most predictable line item"| M4
+  U4 -->|"differential blocks retained for 30 days"| M1
+  U4 -->|"SnapshotShare is a write transaction"| M3
+  U5 -->|"vault storage, billed by Azure Backup not by Files"| N2
+  U6 -->|"reads from the snapshot"| M5
+  U6 -->|"writes into the live share"| M3
+  U7 --> N1
+  U8 --> N3
+  U9 --> M8
+  MET --> BILL["Storage account invoice lines"]
+  OTH --> BILL
+  L1["Lever - exclude tiered files from antivirus, backup agents and indexers.<br/>They are the usual cause of a recall spike and they move M5, M7 and N4 at once."]
+  L2["Lever - reservations of 10 TiB or 100 TiB for 1 or 3 years discount storage by up to 36 percent.<br/>They cover Data Stored only. Transactions, metadata, bandwidth and data transfer stay at list price."]
+  L3["Lever - the access tier is a bet. Cool has the cheapest storage and the most expensive transactions,<br/>and only cool carries Data Retrieval. Moving a share between tiers costs a per-file transaction charge."]
+  L4["Lever - agent v22 or later plus Software Assurance plus Azure Arc removes the per-server fee for eligible servers, from January 2026."]
+  L1 -.->|"cuts"| U2
+  L2 -.->|"discounts"| M1
+  L3 -.->|"chooses"| M7
+  L4 -.->|"discounts"| N1

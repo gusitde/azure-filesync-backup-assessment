@@ -1,0 +1,45 @@
+%% Private-connectivity cut-over - nine phases and the gate that must pass on every server before the next phase starts
+%% Source: codex/playbook-add-file-private-endpoint-and-dns.md, codex/playbook-harden-existing-storage-account.md steps 1 to 8, codex/playbook-enable-file-sync-private-endpoint-and-cutover.md steps 1 to 10, codex/blueprint-azure-dns-for-private-endpoints.md; Assess-AzFileSyncExport.ps1 -PrivateTrafficRequired
+timeline
+  title Private-connectivity cut-over for the Contoso - each phase ends at a gate, not at a deployment
+  section Phase 0 and 1 - evidence and transit
+    Phase 0 baseline
+      : Export the environment and run the assessor with -PrivateTrafficRequired
+      : Record the open findings NET-01, NET-05, NET-06, NET-10, NET-11 and SEC-03
+      : GATE - assessment.md stored as the before evidence and attached to the change record
+    Phase 1 transit
+      : ExpressRoute private peering up, gateway in the hub, spoke peered with allowGatewayTransit on the hub side and useRemoteGateways on the spoke side
+      : snet-pe-region-01 created as a slash 26 with privateEndpointNetworkPolicies Disabled
+      : GATE - a Contoso server reaches a test private IP in the spoke over the circuit and NET-10 clears
+  section Phase 2 and 3 - names before addresses
+    Phase 2 DNS platform
+      : DNS Private Resolver in the hub with a static inbound IP and an outbound endpoint with a ruleset rule for contoso.local
+      : The seven privatelink zones created once in rg-dns-privatezones and linked to the hub and the spokes
+      : GATE - the inbound endpoint answers a query sent from the Infoblox grid and NET-11 clears
+    Phase 3 file endpoint
+      : Private endpoint pe-account-file with sub-resource file and a DNS zone group on privatelink.file.core.windows.net
+      : Infoblox conditional forwarder for privatelink.file.core.windows.net to the inbound endpoint, endpoint IP reserved in IPAM
+      : GATE - on EVERY registered server and every direct SMB client, Resolve-DnsName returns the CNAME plus a 10.x address and Test-NetConnection succeeds on 445 and on 443
+  section Phase 4 and 5 - lock the storage account
+    Phase 4 storage firewall
+      : defaultAction Deny, bypass AzureServices, IP network rules for admin egress only, publicNetworkAccess left Enabled
+      : GATE - the next Telemetry 9102 has HResult 0, a cloud change enumeration completes, and one scheduled backup job succeeds
+    Phase 5 soak
+      : Twenty four hours with every server endpoint Healthy and no 9006 recall errors
+      : GATE - re-run the assessor. NET-06, NET-08 and SEC-03 are gone and no AFS-14 or SEC-05 has appeared
+  section Phase 6 to 8 - the Storage Sync Service goes last
+    Phase 6 afs endpoint
+      : Private endpoint pe-sss-afs with group id Afs, four IP configurations, DNS zone group on privatelink.afs.azure.net, four IPs into IPAM
+      : Infoblox conditional forwarder for privatelink.afs.azure.net
+      : GATE - Debug-StorageSyncServer -TestNetworkConnectivity succeeds and all four afs names resolve to 10.x on EVERY server
+    Phase 7 managed identity
+      : Optional. Arc-enable the servers, run Set-AzStorageSyncServiceIdentity, wait for useIdentity true
+      : GATE - Get-AzStorageSyncServer shows ActiveAuthType ManagedIdentity within fifteen minutes on every server
+    Phase 8 public endpoint off
+      : Set-AzStorageSyncService -IncomingTrafficPolicy AllowVirtualNetworksOnly. Rollback is AllowAllTraffic and is typed before the change is made
+      : GATE - 9301 heartbeats continue, the next 9102 has HResult 0, a tiered file recalls, and health stays Healthy for twenty four hours
+  section Phase 9 - close it out
+    Phase 9 closure
+      : Retire the interim public allow-list entries for star dot afs.azure.net and star dot core.windows.net
+      : Keep the permanent public rules for Entra ID, ARM, Microsoft PKI and Microsoft Update
+      : GATE - re-export, re-assess, no NET-05 to NET-08, and the codex entry and change record are updated to the as-built state

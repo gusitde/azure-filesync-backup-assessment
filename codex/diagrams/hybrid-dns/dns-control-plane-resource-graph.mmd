@@ -1,0 +1,77 @@
+%% The hybrid DNS control plane as objects - what references what, which cardinality is a hard limit, and where the Infoblox half of the estate attaches
+%% Source: Microsoft Learn "Azure DNS Private Resolver overview" (limits table), "Azure DNS Private Resolver endpoints and rulesets" (ruleset and rule properties, ruleset links, static and dynamic IP), "Azure Private Endpoint DNS integration" (zone group limits); codex/playbook-deploy-dns-private-resolver-and-forwarders.md dns.bicep and codex/blueprint-azure-dns-for-private-endpoints.md steps 1 to 6
+erDiagram
+  SUBSCRIPTION ||--o{ DNS_RESOLVER : "15 resolvers per subscription"
+  HUB_VNET ||--|| DNS_RESOLVER : "one resolver per VNet and one VNet per resolver, same region"
+  DNS_RESOLVER ||--o{ INBOUND_ENDPOINT : "5 per resolver"
+  DNS_RESOLVER ||--o{ OUTBOUND_ENDPOINT : "5 per resolver"
+  INBOUND_ENDPOINT ||--|| DELEGATED_SUBNET : "its own subnet, never shared"
+  OUTBOUND_ENDPOINT ||--|| DELEGATED_SUBNET : "its own subnet, never shared"
+  OUTBOUND_ENDPOINT ||--o{ FORWARDING_RULESET : "2 rulesets per outbound endpoint"
+  FORWARDING_RULESET ||--o{ FORWARDING_RULE : "1000 rules per ruleset"
+  FORWARDING_RULESET ||--o{ RULESET_VNET_LINK : "500 links per ruleset, same region only"
+  RULESET_VNET_LINK }o--|| SPOKE_VNET : "gives the spoke the forwarding rules, peering not required"
+  FORWARDING_RULE }o--o{ INFOBLOX_GRID_MEMBER : "6 target servers per rule, first one used until it stops answering"
+  PRIVATE_DNS_ZONE ||--o{ ZONE_VNET_LINK : "link the hub AND every spoke that holds clients"
+  ZONE_VNET_LINK }o--|| SPOKE_VNET : "registrationEnabled false on every link"
+  ZONE_VNET_LINK }o--|| HUB_VNET : "this link is what lets the inbound endpoint answer"
+  PRIVATE_DNS_ZONE ||--o{ A_RECORD : "one record set per endpoint name"
+  DNS_ZONE_GROUP ||--o{ PRIVATE_DNS_ZONE : "5 zones per group, one per zone NAME"
+  PRIVATE_ENDPOINT ||--|| DNS_ZONE_GROUP : "exactly one group per endpoint, a second cannot be added"
+  PRIVATE_ENDPOINT ||--|| PE_NIC : "the NIC holds the address the A record must carry"
+  PE_NIC ||--o{ A_RECORD : "one address for file, four for afs"
+  PRIVATE_ENDPOINT }o--|| PE_SUBNET : "privateEndpointNetworkPolicies Disabled"
+  INFOBLOX_FORWARD_ZONE }o--|| INBOUND_ENDPOINT : "forward-only to the static address"
+  INFOBLOX_FORWARD_ZONE }o--|| INFOBLOX_GRID_MEMBER : "must exist on every member that serves the file servers"
+  INFOBLOX_IPAM_RECORD }o--|| PE_NIC : "reserve every endpoint address"
+  INFOBLOX_IPAM_RECORD }o--|| INBOUND_ENDPOINT : "reserve the resolver addresses too"
+
+  DNS_RESOLVER {
+    string name "dnspr-hub-westus-01"
+    string module "avm slash res slash network slash dns-resolver 0.5.8"
+    string state "dnsResolverState must read Connected"
+    string blocker "no ExpressRoute FastPath, no IPv6 subnet, not compatible with Azure Lighthouse"
+  }
+  INBOUND_ENDPOINT {
+    string address "10.100.20.4"
+    string allocation "Static - a dynamic address takes the fifth address in the subnet and can move on reprovision"
+    string role "the single address that goes into every Infoblox forward zone and into IPAM"
+    string capacity "10000 QPS per endpoint"
+  }
+  OUTBOUND_ENDPOINT {
+    string address "none - it is an egress attachment, not a listener"
+    string deletion "cannot be deleted until the ruleset and its VNet links are deleted first"
+  }
+  DELEGATED_SUBNET {
+    string size "minimum slash 28, maximum slash 24"
+    string delegation "Microsoft.Network slash dnsResolvers"
+    string sharing "no other resource and no second endpoint may share it"
+  }
+  FORWARDING_RULE {
+    string domainName "contoso.local. - dot-terminated, 1 to 34 labels"
+    string targets "10.1.10.10 port 53 and 10.1.10.11 port 53"
+    string state "Enabled or Disabled - a disabled rule is ignored as if absent"
+    string matching "longest prefix match wins over a shorter suffix"
+    string forbidden "168.63.129.16 is rejected as a rule destination"
+  }
+  RULESET_VNET_LINK {
+    string loop_warning "never link the ruleset to the VNet that hosts the inbound endpoint a rule points at"
+  }
+  PRIVATE_DNS_ZONE {
+    string set "the seven privatelink names for file, afs, blob, queue, vaultcore, migration and siterecovery"
+    string uniqueness "exactly one zone per name for the whole estate"
+    string caution "never override a zone that public resolution still needs"
+  }
+  DNS_ZONE_GROUP {
+    string effect "writes and rewrites the A record, and deletes it when the endpoint is deleted"
+    string alternative "hand-made record sets, which nothing keeps in step - assessor rule NET-04"
+  }
+  INFOBLOX_FORWARD_ZONE {
+    string scope "one forward zone per privatelink name, forward-only, no recursion"
+    string alternative "the whole public suffix, which captures every tenant's storage names"
+  }
+  INFOBLOX_IPAM_RECORD {
+    string view "network view Azure"
+    string attribute "extensible attribute azure-resource-id"
+    string discovery "Infoblox Azure discovery with Reader on the subscriptions"
+  }

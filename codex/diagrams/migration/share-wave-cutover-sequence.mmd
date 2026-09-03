@@ -1,0 +1,43 @@
+%% One share migration wave - seeded copy, freeze, final MIR pass, DFS-N name takeover, and the rollback branch - Contoso profile
+%% Source: Microsoft Learn "Migrate to Azure Files using RoboCopy" (command, repeated passes, downtime estimate, cutover), "How to use DFS-N with Azure Files" (root consolidation, netdom, SPN removal, CNAME, klist, do not delete the source computer account), "Change the amount of time that clients cache referrals" (300 s root, 1800 s folder)
+sequenceDiagram
+  autonumber
+  participant LEAD as Migration lead
+  participant CP as RoboCopy host on Windows Server 2022
+  participant SA as Azure file share over the private endpoint
+  participant SRC as FILE01 source file server
+  participant NS as CloudDFSN namespace server
+  participant AD as AD DS on the PDC emulator plus Infoblox contoso.local
+  participant CLI as Domain-joined test client
+  LEAD->>SA: set the ACLs on the root directory of the target share FIRST
+  Note over LEAD,SA: root ACL changes propagate slowly once millions of files exist
+  LEAD->>CP: mount the share with admin-level access using the storage account key so that /B works
+  CP->>SA: pass 1 robocopy /MT:20 /R:2 /W:1 /B /MIR /IT /COPY:DATSO /DCOPY:DAT /NP /NFL /NDL /XD "System Volume Information" /UNILOG
+  Note over CP,SA: S is NTFS ACLs and O is owner. U auditing cannot be stored in an Azure file share
+  CP->>SA: pass 2 then pass 3, users still on FILE01, record elapsed time of each pass
+  CP-->>LEAD: gate 1 - last catch-up pass under the agreed window and the UNILOG has no unresolved errors
+  Note over LEAD,CLI: the duration of the last catch-up pass IS the cutover downtime estimate
+  LEAD->>NS: 24 h before cutover lower the folder referral cache from 1800 s to 300 s
+  LEAD->>CLI: freeze notice to the department, window opens
+  LEAD->>SRC: power FILE01 off - do not unjoin it from the domain
+  CP->>SA: final robocopy /MIR pass on the frozen namespace
+  LEAD->>AD: Disable-ADAccount FILE01$ then setspn -D HOST/FILE01 and HOST/FILE01.contoso.local
+  Note over LEAD,AD: run every directory change against the PDC emulator - a split write hits KDC_ERR_PRINCIPAL_NOT_UNIQUE
+  LEAD->>NS: netdom computername CloudDFSN.contoso.local /add:FILE01.contoso.local
+  NS-->>LEAD: alternate name in msDS-AdditionalDnsHostName and HOST SPNs registered, HOST covers cifs
+  LEAD->>AD: Add-DnsServerResourceRecordCName FILE01 to CloudDFSN.contoso.local
+  LEAD->>CLI: verify from a client, never from the namespace server itself
+  CLI->>AD: Resolve-DnsName FILE01 -Type CNAME
+  CLI->>NS: open the old path, receive the DFS referral over SMB 445
+  CLI->>SA: mount the referred Azure file share, Kerberos AES-256, SMB 445 over ExpressRoute
+  alt gate 2 passed
+    CLI-->>LEAD: klist shows a ticket for cifs/FILE01 and the share contents are correct
+    LEAD->>NS: raise the folder referral cache back to 1800 s, start the 7-day soak
+    LEAD->>SRC: keep FILE01 powered off and its computer account disabled for the soak, then decommission
+  else gate 2 failed - NTLM fallback, wrong account name, or missing content
+    LEAD->>AD: remove the CNAME, Enable-ADAccount FILE01, re-register HOST/FILE01 on the old account
+    LEAD->>NS: netdom computername CloudDFSN.contoso.local /remove:FILE01.contoso.local
+    LEAD->>SRC: power FILE01 back on, users return to the source within one referral TTL
+    Note over LEAD,SRC: rollback is only possible because the source computer account was disabled and not deleted
+    LEAD->>CP: re-run catch-up passes and re-book the window
+  end

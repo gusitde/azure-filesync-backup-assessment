@@ -1,0 +1,61 @@
+%% Deletion protection on Contoso account - which delete is reversible, for how long, and what the reversal does NOT bring back
+%% Source: Microsoft Learn - Azure file share soft delete (retention 1 to 365 days, default 7, undelete restores snapshots, permanent delete needs undelete then disable then delete); Recover a deleted storage account (14 days, best effort, resource group must exist, linked private endpoints are removed and not recreated); codex/runbook-restore-file-share-and-share-soft-delete.md classes 4 and 5; codex/blueprint-azure-files-secure-storage-account.md step 6
+stateDiagram-v2
+  direction LR
+
+  state "One file share - home-drives, dept-shares or archive" as SHARE {
+    direction TB
+    state "Active. Soft delete is on at the ACCOUNT level, so the setting covers every share in stmryfiles01 at once" as ACTIVE
+    state "Leased by Azure Backup. While the share is protected, an infinite snapshot lease means a delete is no longer one click" as LEASED
+    state "Soft deleted. Listed by az storage share-rm list --include-deleted with a remainingRetentionDays counter and a deleted-version id" as SOFT
+    state "Undeleted. The share AND all of its snapshots come back in their pre-deletion state, and the File Sync cloud endpoint resumes" as UNDEL
+    state "Permanently gone. Retention elapsed, or an operator ran the deliberate three-step - undelete the share, disable soft delete, delete it again" as GONE
+
+    [*] --> ACTIVE
+    ACTIVE --> LEASED : protected by the vault
+    ACTIVE --> SOFT : deleted
+    LEASED --> SOFT : deleted after the lease is broken
+    SOFT --> UNDEL : az storage share-rm restore with the deleted-version, inside the window
+    UNDEL --> ACTIVE
+    SOFT --> GONE : remainingRetentionDays reaches zero
+    UNDEL --> GONE : the deliberate purge path, three steps, never accidental
+  }
+
+  state "The storage account stmryfiles01" as ACCOUNT {
+    direction TB
+    state "Live with a CanNotDelete lock. The lock is the ONLY control here that is preventive rather than compensating" as LOCKED
+    state "Live with no lock. Assessor SEC-09" as UNLOCKED
+    state "Deleted. A restore is possible for 14 days, is BEST EFFORT and is not guaranteed" as DELETED
+    state "Restored. Requires the original resource group to still exist, no new account of the same name, and Microsoft.Storage/storageAccounts/write on the caller" as RESTORED
+    state "Unrecoverable. Past 14 days, or the resource group was deleted too - a resource group cannot be recovered at all" as LOST
+
+    [*] --> UNLOCKED
+    UNLOCKED --> LOCKED : az lock create -t CanNotDelete
+    LOCKED --> UNLOCKED : an operator with lock write removes it, which is the real attack path
+    UNLOCKED --> DELETED : one portal click
+    DELETED --> RESTORED : portal Restore, inside 14 days
+    DELETED --> LOST : window elapsed or the resource group went with it
+    RESTORED --> UNLOCKED
+  }
+
+  note right of ACCOUNT
+    What a successful account restore does NOT bring back.
+    Every linked private endpoint is removed with the account
+    and is not recreated by the restore, so Contoso must
+    re-create the file endpoint, re-approve the connection and
+    re-point the privatelink.file.core.windows.net A record
+    before a single server can mount again. If the account
+    used a customer-managed key and the key vault was deleted
+    as well, the vault has to be restored FIRST.
+  end note
+
+  note left of SHARE
+    Three different windows, three different owners, and only
+    the first two are share-level. Share soft delete is 1 to 365
+    days and defaults to 7 - Contoso sets 14 because Azure
+    Backup requires at least 14. Backup snapshot retention runs
+    on the policy. Vault-tier retention runs on Contoso
+    records schedule. Soft delete recovers a deleted SHARE,
+    never a deleted file inside a live share - that is a
+    snapshot or a backup restore.
+  end note

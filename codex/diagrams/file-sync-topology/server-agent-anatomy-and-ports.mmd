@@ -1,0 +1,63 @@
+%% Anatomy of one registered Contoso file server - agent processes, what consumes the volume, and every port that leaves the box
+%% Source: Microsoft Learn "Plan an Azure File Sync deployment" (free space on your local disk, heatstore 1.1 KiB per file), "How to manage Azure File Sync tiered files" (StorageSync.sys, reparse tag 0x8000001e), "Create an Azure File Sync server endpoint" (port 443 for all server to service communication), read 2026-09-03; codex/blueprint-azure-file-sync-private-path.md; Get-AfsServerDiagnostics.ps1 sections 2 and 3
+flowchart LR
+  subgraph SRV["Contoso file server - Windows Server 2022 - joined to contoso.local"]
+    subgraph UM["User mode"]
+      SVC["FileSyncSvc.exe - Storage Sync Agent service - runs sync sessions and the tiering job every 60 minutes"]
+      MON["AzureStorageSyncMonitor.exe - telemetry and the 9301 GetNextJob heartbeat every 30 s"]
+      CMD["StorageSync.Management.ServerCmdlets.dll - Invoke-StorageSyncFileRecall, Invoke-StorageSyncCloudTiering, Get-StorageSyncHeatStoreInformation, Debug-StorageSyncServer"]
+    end
+    subgraph KM["Kernel mode - visible in fltmc filters"]
+      FLT["StorageSync.sys - owns reparse tag 0x8000001e, performs transparent recall, tracks last access for the heat store"]
+      GRD["StorageSyncGuard.sys - protects sync metadata from tampering"]
+    end
+    subgraph VOL["Data volume D - server endpoint on D dept - NTFS 4 KiB clusters - never the system volume"]
+      RP["Reparse points - NTFS allocates one full cluster per tiered file and that space shows in no UI"]
+      DB["Sync metadata database - one cluster per file and per directory"]
+      HS["Heat store - 1.1 KiB per file - one store per volume, not per endpoint"]
+      HOT["Hot cache - fully downloaded files"]
+      FREE["Reserved by the volume free space policy - 20 percent of the volume"]
+    end
+    USN["NTFS USN change journal - a local write starts an upload session within minutes"]
+    EVT["Telemetry event log - Applications and Services then Microsoft then FileSync then Agent"]
+    REG["HKLM SOFTWARE Microsoft Azure StorageSync - GhostingExclusionList and HeatTrackingProcessNamesExclusionList - a failover cluster uses the HKLM Cluster StorageSync path instead"]
+  end
+  WS["Contoso workstations and application servers"]
+  DC[("contoso.local domain controllers - AD DS, AES-256 Kerberos")]
+  IB[("Infoblox grid - authoritative contoso.local, forwarders for privatelink.afs.azure.net and privatelink.file.core.windows.net")]
+  subgraph ER["ExpressRoute private peering"]
+    CKT["Circuit and gateway"]
+  end
+  subgraph SPOKE["Private-endpoint spoke"]
+    PE1["Private endpoint afs - 4 private IPs - management, sync primary, sync secondary, monitoring"]
+    PE2["Private endpoint file - 1 private IP"]
+  end
+  SSS["Storage Sync Service - incomingTrafficPolicy AllowVirtualNetworksOnly"]
+  SA[("Storage account - StorageV2, ZRS or GRS - the Azure file share holds the complete data set")]
+  PUB(("Public 443 and it cannot be made private - login.microsoftonline.com, management.azure.com, Microsoft PKI and OCSP, Microsoft Update for the agent"))
+
+  WS -->|"SMB 445 Kerberos - the only protocol users ever speak"| SRV
+  SRV -->|"Kerberos 88 and LDAP 389"| DC
+  SRV -->|"DNS 53"| IB
+  SVC --- MON
+  SVC --- CMD
+  SVC --> FLT
+  FLT --> GRD
+  USN --> SVC
+  FLT --> RP
+  SVC --> DB
+  FLT --> HS
+  SVC --> EVT
+  REG --> FLT
+  SVC -->|"HTTPS 443 sync control and metadata - the agent always initiates, no inbound port is ever opened"| CKT
+  FLT -->|"HTTPS 443 FileREST upload and recall - never SMB"| CKT
+  CKT --> PE1 --> SSS
+  CKT --> PE2 --> SA
+  SSS -->|"change enumeration and cloud endpoint operations on the trusted-services path inside Microsoft, never on ExpressRoute"| SA
+  SRV -.->|"identity, ARM, certificate revocation and agent update stay on the public internet"| PUB
+  RP --- FREE
+  DB --- FREE
+  HS --- FREE
+  HOT --- FREE
+  BUDGET["Worked budget for 1 million files and 100000 directories on a 1000 GiB volume with 4 KiB clusters - reparse points 4 GiB plus sync metadata 4.4 GiB plus heat store 1.1 GiB plus a 20 percent policy of 200 GiB equals about 209.5 GiB that is not available for user data"]
+  VOL --> BUDGET

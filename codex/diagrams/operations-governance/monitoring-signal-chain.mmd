@@ -1,0 +1,52 @@
+%% Operational signal chain - where every File Sync, Azure Files and Backup signal originates and where it lands - Contoso profile
+%% Source: Microsoft Learn "Monitor Azure File Sync" (metric charts, Telemetry event IDs, 15 min metric interval), "Monitoring data reference for Azure Files" (fileServices metrics and StorageFileLogs), "Diagnostic events for Azure Backup users" (resource-specific tables), codex/blueprint-azure-files-backup-protection.md
+flowchart LR
+  subgraph SRV["Contoso file servers - contoso.local, AD DS joined, File Sync agent"]
+    EVT[("Telemetry event log - Applications and Services / Microsoft / FileSync / Agent")]
+    E1["Sync - 9102 session complete with HResult and PerItemErrorCount, 9302 progress every 5 to 10 min, 9121 one event per per-item error with PersistentCount and TransientCount"]
+    E2["Registered server - 9301 GetNextJob every 30 s, status 0 means the service is reachable"]
+    E3["Tiering - 9003 error distribution, 9016 ghosting per volume, 9029 ghosting session"]
+    E4["Recall - 9005 reliability, 9006 error distribution, 9009 session, 9059 by application, 9071 cache hit and miss bytes"]
+    PERF["Perfmon objects AFS Bytes Transferred and AFS Sync Operations"]
+  end
+  LOCAL["Server-local only - read with Get-WinEvent or Debug-StorageSyncServer -FileSyncErrorsReport. Azure Monitor does not collect this log."]
+  subgraph AZ["Azure resources that emit platform metrics"]
+    SSS["Storage Sync Service - metrics every 15 min - dimensions Server name, Server Endpoint Name, Sync Group Name"]
+    SAF["Storage account fileServices/default - Transactions, Availability, Egress, SuccessServerLatency at PT1M and FileCapacity, FileShareCapacityQuota, FileShareSnapshotCount at PT1H"]
+    RSV["Recovery Services vault rsv-contoso-westus - built-in Azure Monitor alerts"]
+  end
+  subgraph MON["Azure Monitor"]
+    MET[("Platform metric store")]
+    RULES["Metric alert rules - the recommended File Sync set plus the Azure Files set"]
+    APR["Alert processing rule - type AddActionGroups, filter targetResourceType equals Microsoft.RecoveryServices/vaults"]
+    AG["Action group ag-organization-storage - storage team mailbox, SMS, ITSM webhook"]
+  end
+  subgraph LAW["Contoso Log Analytics workspace"]
+    T1[("StorageFileLogs - categories StorageRead, StorageWrite, StorageDelete")]
+    T2[("CoreAzureBackup, AddonAzureBackupJobs, AddonAzureBackupPolicy, AddonAzureBackupStorage, AddonAzureBackupProtectedInstance")]
+    WB["Workbooks and Backup reports - up to 24 h for the first data push, read from day two"]
+  end
+  OPS["eng-sysops on call and the monthly operations review"]
+  LEGACY["Anti-pattern - AzureBackupReport is Azure diagnostics mode only. Put it in the resource-specific setting and no data reaches the workspace at all."]
+  EVT --- E1
+  EVT --- E2
+  EVT --- E3
+  EVT --- E4
+  E1 -->|"portal server endpoint health is derived from 9102 and 9302, persistent and transient error counts from 9121"| SSS
+  E2 -->|"registered server Online or Appears Offline"| SSS
+  E4 -->|"cloud tiering space savings from 9071, recall errors from 9006"| SSS
+  E3 -.->|"not shipped"| LOCAL
+  PERF -.->|"not shipped"| LOCAL
+  SSS -->|"metrics every 15 min"| MET
+  SAF -->|"platform metrics"| MET
+  MET --> RULES
+  RULES -->|"fires"| AG
+  RSV -->|"job failure and security alerts"| APR
+  APR -->|"notifications are opt-in, alerts are not"| AG
+  SAF -->|"diagnostic setting to the workspace"| T1
+  RSV -->|"diagnostic setting, Resource specific mode"| T2
+  T1 --> WB
+  T2 --> WB
+  AG --> OPS
+  WB --> OPS
+  LEGACY -.->|"do not mix modes"| T2

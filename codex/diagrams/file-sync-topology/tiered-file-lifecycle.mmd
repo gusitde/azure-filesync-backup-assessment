@@ -1,0 +1,41 @@
+%% Lifecycle of a single file on a cloud-tiering server endpoint - states, attributes and what moves it - Contoso profile
+%% Source: Microsoft Learn Understand Azure File Sync cloud tiering and How to manage Azure File Sync tiered files (read 2026-09-03); docs/RULES.md TIER-02, TIER-03, SRV-09
+stateDiagram-v2
+    direction TB
+    [*] --> NewLocal
+    state "New on the server - not yet uploaded" as NewLocal
+    state "Locally cached - size on disk equals logical size - attributes A only" as Cached
+    state "Tiered - reparse point tag 0x8000001e - size on disk zero - attributes A L O and M on WS2019 plus" as Tiered
+    state "Partially recalled - sparse - only the read range is on disk" as Partial
+    state "Never tiered - below 2x cluster size with an 8 KiB floor, or matched by GhostingExclusionList" as Excluded
+
+    NewLocal --> Cached : initial upload of the whole endpoint completes - the volume free space policy does not act before that
+    NewLocal --> Tiered : low disk space mode only - tiering starts per file as soon as that file is uploaded
+    Cached --> Excluded : file smaller than the minimum tierable size or listed in GhostingExclusionList
+    Cached --> Tiered : hourly policy check tiers the coldest files off the heat map until the volume free space target is met
+    Cached --> Tiered : date policy - not read or written for tierFilesOlderThanDays - only if free space already satisfies the volume policy
+    Cached --> Tiered : Invoke-StorageSyncCloudTiering forces one file or one directory
+    Tiered --> Partial : streaming read by a media player or a zip utility recalls only the requested range
+    Partial --> Cached : the full read completes - the reparse point and the O attribute are removed
+    Tiered --> Cached : a user opens the file and StorageSync.sys recalls it
+    Tiered --> Cached : Invoke-StorageSyncFileRecall - up to 32 threads - Order CloudTieringPolicy stops at the policy limit
+    Tiered --> Cached : proactive recall pulls down a change another endpoint made
+    Tiered --> Tiered : recall while in low disk space mode is NOT persisted to disk - the next read recalls it again
+    Excluded --> Cached : exclusions never apply to already tiered files - recall them explicitly
+
+    note right of Tiered
+      Heat position is MAX of last access, last modified, creation time.
+      Azure File Sync tracks last access itself - do not turn on the NTFS
+      last access time feature.
+      Get-StorageSyncHeatStoreInformation shows the exact tiering and
+      recall order with IndexName FilesToBeTieredBySpacePolicy,
+      FilesToBeTieredByDatePolicy and OrderTieredFilesWillBeRecalled.
+    end note
+
+    note left of Cached
+      Low disk space mode: entered when free space falls below
+      MIN of 10 percent of the volume, the free-space policy in GiB, and 20 GiB.
+      The agent then checks for files to tier every minute instead of every hour
+      and stops persisting recalls. Telemetry event 19000 every minute,
+      IsLowDiskMode true. Rule TIER-03.
+    end note

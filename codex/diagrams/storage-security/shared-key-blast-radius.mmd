@@ -1,0 +1,45 @@
+%% Blast radius of allowSharedKeyAccess false on a Contoso Azure Files account - what still depends on the key, what breaks, what contains it
+%% Source: codex/runbook-storage-key-rotation-and-shared-key-incidents.md class 3 and codex/blueprint-azure-files-secure-storage-account.md step 3 (SEC-04, BKP-18); Microsoft Learn - Prevent authorization with Shared Key (SAS table, Azure Files transition guidance, DRAG detection); Manage account access keys; Support matrix for Azure Files backup
+flowchart TB
+  SWITCH["The switch - allowSharedKeyAccess set to false. The property is unset by default and the account permits Shared Key while it is null or true"]
+
+  subgraph DETECT["Detect BEFORE flipping - two independent tools, both needed"]
+    MET["Metric Transactions in the Account namespace, aggregation Sum, filtered on the Authentication dimension for Account Key and SAS. Tells you HOW MANY key requests, never WHO"]
+    LOG["Resource log StorageFileLogs from the fileServices diagnostic setting. Fields AuthenticationType, CallerIpAddress, UserAgentHeader. Tells you WHICH client"]
+    TRAP["Trap - after the switch, requests that still log as Shared Key are TRUSTED ACCESS from a resource registered in the tenant, not a stray client"]
+  end
+
+  subgraph BREAKS["Immediate blast radius - every caller here fails 403 Forbidden, key-based authorization not permitted"]
+    BK["Azure Backup for Azure file shares. Backup and restore jobs use key-based access against the source account. Assessor BKP-18. This alone disqualifies the switch on every protected Contoso share"]
+    AFS["Azure File Sync cloud endpoint operations on any server registered without a managed identity. The agent re-reads the key today, so removing it stops sync"]
+    SAS1["Every account SAS and every service SAS, across ALL storage services. Both kinds are signed with the shared key"]
+    PORTAL["The portal file browser. The Azure portal uses Shared Key for file shares by default, so the share listing returns 403 while portal.azure.com itself still loads"]
+    SE["Azure Storage Explorer against file shares. Entra ID authorization to File storage is NOT supported there - only blob, queue, table and ADLS"]
+    SHELL["Any Cloud Shell profile persisted in a file share on this account"]
+  end
+
+  subgraph SURVIVES["Outside the blast radius"]
+    KERB["SMB mounts authenticated with Kerberos over the file private endpoint. Kerberos is the documented Azure Files over SMB path and never touches the account key"]
+    ARM["The control plane at management.azure.com. Azure RBAC and the CanNotDelete lock decide there - the key is a data-plane credential only"]
+    UDSAS["A user delegation SAS would survive, being signed with Entra credentials, but it is BLOB ONLY - a file share cannot issue one"]
+  end
+
+  subgraph CONTAIN["What contains it"]
+    REVERT["Revert - set allowSharedKeyAccess true. One property, effective immediately. This is runbook class 3 recovery"]
+    MI["Move File Sync to a managed identity on the Arc-enabled registered servers. That removes ONE of the two dependencies, not both"]
+    ENTRA["Authorize file data in the portal with the Entra account instead of the key, so the browser stops needing Shared Key"]
+    SPLIT["Move any workload that genuinely cannot leave keys to its own storage account and keep the Files account outside the Deny policy"]
+    NTLM["Retire key-based SMB mounts FIRST by dropping NTLMv2 from authenticationMethods. That is the control that kills a key mount - this switch is not"]
+  end
+
+  RESIDUE["Documented residue for Contoso - SEC-04 stays open with a written justification. Shared key remains ON while Azure Backup protects these shares. Built-in policy 8c6a50c6 stays at Audit with an exemption for File Sync and Backup accounts, never Deny"]
+  CA["Consequence to state out loud - because Shared Key stays allowed, this account cannot be brought under Microsoft Entra Conditional Access, which requires Shared Key to be disallowed"]
+
+  DETECT --> SWITCH
+  SWITCH -->|"data plane, all protocols"| BREAKS
+  SWITCH -.->|"unaffected"| SURVIVES
+  BREAKS --> CONTAIN
+  MI --> RESIDUE
+  BK --> RESIDUE
+  RESIDUE --> CA
+  NTLM -.->|"sequence this before the switch, never after"| SWITCH

@@ -1,0 +1,20 @@
+%% Cost levers for Contoso estate placed by effort against annual saving - which ones to pull first
+%% Source: the levers and the meters they move are grounded in Microsoft Learn "Understand Azure Files billing" value-added services and reservations sections, "Plan an Azure File Sync deployment" antivirus and recall sections, and assessor rules TIER-04, TIER-05, TIER-06, AFS-04, DATA-04 in docs/RULES.md, all read 2026-09-03. The x and y positions are the consulting judgement for a Contoso-sized estate, not a Microsoft published figure - re-place them after the first month of real invoices
+quadrantChart
+    title Azure Files and File Sync cost levers - effort against annual saving
+    x-axis Low effort and low disruption --> High effort and change control
+    y-axis Small saving --> Large saving
+    quadrant-1 Plan into the engagement
+    quadrant-2 Do this week
+    quadrant-3 Hygiene - bundle with other work
+    quadrant-4 Needs a written business case
+    Exclude tiered files from antivirus and indexers: [0.15, 0.80]
+    Buy a 100 TiB three year reservation: [0.22, 0.88]
+    Unregister decommissioned servers: [0.10, 0.32]
+    Put the archive share on the cool access tier: [0.32, 0.58]
+    Right-size the volume free space policy: [0.38, 0.46]
+    Trim snapshot retention toward the records schedule: [0.24, 0.26]
+    Exclude the archive account from Defender for Storage: [0.18, 0.18]
+    Take the Arc plus Software Assurance sync discount: [0.55, 0.42]
+    Migrate the shares to provisioned v2: [0.86, 0.62]
+    Flatten the directory tree to cut daily enumeration: [0.82, 0.24]

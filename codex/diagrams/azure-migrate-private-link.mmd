@@ -1,0 +1,30 @@
+%% Azure Migrate over Private Link - endpoints, zones and what stays public - Contoso profile
+%% Source: codex/blueprint-azure-migrate-private-link-landing.md (Microsoft Learn: Azure Migrate private endpoints; troubleshoot network connectivity)
+flowchart LR
+  subgraph Contoso[Contoso network]
+    APP[Azure Migrate appliance + replication provider]
+    IB[("Infoblox forwarders: privatelink.prod.migration.windowsazure.com, privatelink.vaultcore.azure.net, privatelink.blob.core.windows.net, privatelink.queue.core.windows.net, privatelink.siterecovery.windowsazure.com")]
+  end
+  ER[ExpressRoute private peering]
+  subgraph Spoke[Private-endpoint spoke selected at project creation]
+    PE1[PE migrate project - disc, asm, hub names]
+    PE2[PE key vault]
+    PE3[PE usage storage account usa - blob]
+    PE4[PE cache storage account - blob + queue - Contoso-owned]
+    PE5[PE recovery services vault - 5 siterecovery names]
+  end
+  MIG[Azure Migrate project - connectivity Private endpoint]
+  KV[Key Vault]
+  USA[("usage storage account")]
+  CACHE[("cache storage account - GPv2, Deny + trusted services, vault MI Contributor + Storage Blob Data Contributor")]
+  RSV[Recovery Services vault - replication]
+  PUB(("Public: portal, Entra ID, management.azure.com, aka.ms, download.microsoft.com"))
+  ER --> PE1
+  ER --> PE4
+  APP -->|discovery and assessment| ER --> PE1 --> MIG
+  APP -->|appliance key| PE2 --> KV
+  APP -->|performance and dependency data| PE3 --> USA
+  APP -->|replication data| PE4 --> CACHE
+  APP -->|replication orchestration| PE5 --> RSV
+  APP -.->|still public| PUB
+  IB -.->|resolves every private link FQDN from Download DNS settings| Spoke

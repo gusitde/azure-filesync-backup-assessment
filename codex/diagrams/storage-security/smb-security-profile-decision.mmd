@@ -1,0 +1,53 @@
+%% Choosing the SMB security profile Contoso account can actually enforce - driven by the OLDEST client that must keep mounting
+%% Source: Microsoft Learn - SMB file shares in Azure Files (Windows SMB support table, SMB security settings and their defaults, Require Encryption in Transit for SMB, Set-SmbClientConfiguration EncryptionCiphers, STATUS_ACCESS_DENIED at session setup); codex/playbook-harden-existing-storage-account.md step 3 and codex/playbook-enable-identity-based-auth-ad-ds.md
+flowchart TB
+  START["Inventory first - list every client that mounts this account over SMB 445. Azure File Sync servers do NOT belong on this list, they use FileREST on 443 and are unaffected by every setting below"]
+  Q0{"Have the SMB settings ever been changed on this account"}
+  DEF["The API returns null, which does NOT mean off. It means the permissive defaults are live - versions SMB2.1 SMB3.0 SMB3.1.1, authenticationMethods NTLMv2 Kerberos, kerberosTicketEncryption RC4-HMAC AES-256, channelEncryption AES-128-CCM AES-128-GCM AES-256-GCM. Assessor SEC-08"]
+  Q1{"What is the OLDEST Windows build in the inventory"}
+
+  OLD7["Windows 7, Windows Server 2008 R2 - SMB 2.1, no channel encryption at all"]
+  OLD7X["Dead end on two counts. Encryption in transit cannot be required, because SMB 2.1 has no encryption. And Azure Files only accepts SMB 2.1 from INSIDE the same Azure region, so a Contoso server on-premises cannot mount at all regardless. Rebuild or replace the client - do not weaken the account for it"]
+
+  OLD12["Windows 8.1, Windows Server 2012, Windows Server 2012 R2 - SMB 3.0, maximum cipher AES-128-CCM"]
+  OLD12X["The account must keep AES-128-CCM in channelEncryption for this client, which blocks the maximum-security profile for EVERY share on the account. Both operating systems are past regular support - carry this as a dated exception with an upgrade owner"]
+
+  MID["Windows 10 any version, Windows Server 2016, Windows Server 2019 - SMB 3.1.1, maximum cipher AES-128-GCM"]
+  MIDX["Contoso baseline. versions SMB3.0 and SMB3.1.1, channelEncryption AES-128-GCM and AES-256-GCM, kerberosTicketEncryption AES-256, Require Encryption in Transit for SMB enabled. AES-128-CCM and SMB 2.1 are dropped, and no supported client loses access"]
+
+  NEW["Windows 11, Windows Server 2022, Windows Server 2025 only - SMB 3.1.1 with AES-256-GCM"]
+  NEWX["Maximum security is reachable. versions SMB3.1.1 alone, channelEncryption AES-256-GCM alone, authenticationMethods Kerberos alone"]
+  NEWWARN["Do not skip this - selecting only AES-256-GCM requires running Set-SmbClientConfiguration -EncryptionCiphers AES_256_GCM as administrator on every client, or the client negotiates GCM-128 and is refused"]
+
+  Q2{"Does anything still mount with the storage account key over NTLMv2"}
+  KEEP["Keep NTLMv2 in authenticationMethods for now. Prove it with the Transactions metric split by the Authentication dimension - Account Key traffic must fall to zero before the next step"]
+  KERBONLY["Set authenticationMethods to Kerberos. This is the control that actually ends key-based mounting, and it must follow the AD DS join, not precede it"]
+
+  EIT{"Enable Require Encryption in Transit for SMB"}
+  EITY["Yes - and note that on a CLI or Bicep created account it currently reads Not selected, so it must be set explicitly. Once explicitly configured it takes precedence over Secure transfer required for SMB, and SMB 2.1 is disallowed automatically"]
+  FAIL["Failure signature for every wrong answer above - the settings are evaluated when the SMB session is ESTABLISHED, so the client gets STATUS_ACCESS_DENIED at session setup, not an error on first read. Rollback is to restore the previous profile, move the client, then re-harden"]
+
+  START --> Q0
+  Q0 -->|"no, values come back null"| DEF
+  Q0 -->|"yes"| Q1
+  DEF --> Q1
+  Q1 -->|"Windows 7 or Server 2008 R2"| OLD7
+  Q1 -->|"Windows 8.1 or Server 2012 and 2012 R2"| OLD12
+  Q1 -->|"Windows 10 or Server 2016 and 2019"| MID
+  Q1 -->|"Windows 11, Server 2022 or Server 2025 only"| NEW
+  OLD7 --> OLD7X
+  OLD12 --> OLD12X
+  MID --> MIDX
+  NEW --> NEWX
+  NEWX --> NEWWARN
+  OLD7X -.->|"remove the client from the inventory, then re-run this tree"| Q1
+  OLD12X --> Q2
+  MIDX --> Q2
+  NEWWARN --> Q2
+  Q2 -->|"yes, scripts or appliances still use the key"| KEEP
+  Q2 -->|"no, every mount presents a Kerberos ticket"| KERBONLY
+  KEEP -.->|"re-enter here once the metric shows zero"| Q2
+  KERBONLY --> EIT
+  KEEP --> EIT
+  EIT -->|"yes"| EITY
+  EITY --> FAIL

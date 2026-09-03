@@ -1,0 +1,55 @@
+%% Full-share restore after ransomware on a File Sync server endpoint - the real order of operations and the three ways the job fails
+%% Source: codex/runbook-restore-file-share-and-share-soft-delete.md classes 3 and 6, codex/playbook-enable-azure-backup-for-file-shares.md step 7; Microsoft Learn "Restore Azure Files" (MABRestoreScratchFolder, 20 percent pre-validation, original-location snapshot rule), "About Azure Files backup" (lease, change detection in parallel), "Support matrix for Azure Files backup" (key access) (read 2026-09-03)
+sequenceDiagram
+  autonumber
+  participant IR as Incident responder - eng-sysops
+  participant SRV as Contoso file server - contoso.local
+  participant RSV as Vault rsv-contoso-westus
+  participant BKP as Azure Backup service
+  participant SA as Storage account stmtyfiles01
+  participant TGT as Target share for the restore
+  participant SSS as Storage Sync Service
+
+  Note over IR,SRV: Containment comes first. A restore into a share the<br/>infected server can still write to is re-encrypted within minutes.
+  IR->>SRV: stop FileSyncSvc, or remove the server endpoint from the sync group
+  SRV-->>IR: uploads halted - the share stops receiving encrypted versions
+
+  IR->>RSV: list recovery points for the protected item
+  RSV-->>IR: points listed with a recovery tier of Snapshot, Vault-Standard, or Snapshot and Vault-tier
+  Note over IR,RSV: Default view is the last 30 days. Widen Start Time and End Time<br/>to reach the last known-good point before the encryption began.
+
+  alt the chosen point still has its underlying share snapshot
+    IR->>RSV: full share restore to the ORIGINAL location, conflict Overwrite
+    RSV->>BKP: resolve the snapshot URL from the metadata store
+    BKP->>SA: check the lease on the snapshot, and take one if it is unleased
+    BKP->>SA: copy the snapshot contents over the live share
+  else the snapshot is expired, deleted or tampered with
+    Note over IR,RSV: Original-location restore is refused - it needs a recovery tier of<br/>Snapshot or Snapshot and Vault-tier. Vaulted data restores to an alternate location.
+    IR->>RSV: full share restore from the VAULT-STANDARD point to an ALTERNATE location
+    RSV->>BKP: read the vaulted copy
+    BKP->>TGT: pre-validate free space - target must hold 20 percent more than the source
+    alt free space is short
+      TGT-->>BKP: capacity check fails
+      BKP-->>IR: job fails during PRE-VALIDATION, before any data transfer
+      Note over IR,TGT: Raise the share quota or pick a larger target share, then retry.<br/>Nothing was written, so there is nothing to clean up.
+    else free space is sufficient
+      BKP->>TGT: create MABRestoreScratchFolder, stage and validate
+      BKP->>TGT: write the restored namespace and data
+      BKP->>TGT: delete MABRestoreScratchFolder automatically on completion
+    end
+  end
+
+  alt the storage firewall or key access was hardened past the Backup service
+    SA-->>BKP: request rejected
+    BKP-->>IR: job fails - Backup reaches Azure Files over the key-based data plane
+    Note over IR,SA: Restore networkRuleSet bypass to AzureServices and set<br/>allowSharedKeyAccess to true, then rerun. This is the single most<br/>common self-inflicted restore failure on a locked-down Contoso account.
+  else the trusted-services path is intact
+    SA-->>BKP: writes accepted
+  end
+
+  BKP->>SSS: hand over the list of restored paths
+  Note over BKP,SSS: Change detection runs in PARALLEL with the restore into Azure Files -<br/>the servers do not wait for the 24 hour enumeration cycle.
+  SSS->>SRV: sync down the restored versions
+  IR->>SRV: re-add the server endpoint with initial download Namespace then modified files
+  IR->>RSV: run an on-demand backup and confirm Completed
+  Note over IR,RSV: Closure is a match between the share listing and the server listing,<br/>plus a fresh Completed backup job - not a restore job marked Completed.

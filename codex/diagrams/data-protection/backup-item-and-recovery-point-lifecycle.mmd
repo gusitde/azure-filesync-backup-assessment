@@ -1,0 +1,52 @@
+%% Lifecycle of a protected Contoso file share - the backup item states and the two kinds of recovery point they produce
+%% Source: codex/blueprint-azure-files-backup-protection.md, docs/RULES.md (BKP-01, BKP-02, BKP-15); Microsoft Learn "Secure by default with soft delete", "About Azure Files backup" lease section, "Immutable vault" (read 2026-09-03)
+stateDiagram-v2
+  direction LR
+
+  state "Backup item - one Azure file share in the vault catalog" as ITEM {
+    direction TB
+    state "Discovered - share listed after the storage account is registered, not protected - assessor BKP-01" as DISC
+    state "Protected - policy AFS-Active-4h-30d-Vault-90d - lastBackupStatus Healthy" as PROT
+    state "Protected but unhealthy - jobs failing - assessor BKP-02 and BKP-03" as UNH
+    state "Stop protection with retain data - no new points, existing ones age out on the policy" as RETAIN
+    state "Soft deleted - isScheduledForDeferredDelete true - assessor BKP-15" as SOFT
+    state "Permanently deleted - nothing left in Azure Backup" as PURGE
+
+    [*] --> DISC
+    DISC --> PROT : Enable-AzRecoveryServicesBackupProtection
+    PROT --> UNH : trusted services bypass removed, or allowSharedKeyAccess set to false
+    UNH --> PROT : restore bypass AzureServices and key access, then run an on-demand backup
+    PROT --> RETAIN : stop backup and retain data - protected by MUA
+    PROT --> SOFT : delete backup data - protected by MUA
+    RETAIN --> SOFT : delete backup data
+    SOFT --> RETAIN : undelete inside the window - the item returns as stop-protection-with-retain-data
+    RETAIN --> PROT : resume backup with a policy
+    SOFT --> PURGE : soft-delete retention elapses - 14 days by default, configurable 14 to 180
+  }
+
+  state "Recovery point - what one backup job leaves behind" as RPOINT {
+    direction TB
+    state "Snapshot taken through the Files API in the SOURCE storage account" as SNAP
+    state "Leased by Azure Backup - infinite lease, so deleting the share is no longer one click" as LEASE
+    state "Vault-standard point - changed blocks copied into the vault, offsite" as VAULTRP
+    state "Immutable until expiry - vault immutability Enabled or Enabled and locked" as IMMUT
+    state "Replicated to the paired region - reachable only by cross-region restore" as PAIRED
+    state "Expired and pruned by the policy" as EXP
+
+    [*] --> SNAP
+    SNAP --> LEASE : Backup takes the lease at creation, and re-leases before a restore
+    LEASE --> VAULTRP : only the LAST scheduled snapshot of the day transfers to the vault
+    VAULTRP --> IMMUT : retention can be raised, never shortened, while immutability is on
+    IMMUT --> PAIRED : GRS vault with cross-region restore - up to 48 h to appear after enabling
+    LEASE --> EXP : snapshot retention 30 days - hard cap of 200 recovery points per share
+    IMMUT --> EXP : vault retention from Contoso records schedule - daily 90, monthly 12, yearly 7
+  }
+
+  note right of RPOINT
+    The asymmetry that decides the design.
+    Vault soft delete and vault immutability protect the vault-standard
+    points only. Microsoft classes the snapshot tier as an operational
+    backup, and states that soft delete and immutability do not apply to
+    operational backups of Azure Files. The snapshot chain therefore
+    shares the blast radius of the data it protects.
+  end note

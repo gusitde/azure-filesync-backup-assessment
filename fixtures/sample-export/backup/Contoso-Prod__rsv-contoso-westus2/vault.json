@@ -1,0 +1,40 @@
+{
+ "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.RecoveryServices/vaults/rsv-contoso-westus2",
+ "name": "rsv-contoso-westus2",
+ "type": "Microsoft.RecoveryServices/vaults",
+ "location": "westus2",
+ "tags": {},
+ "sku": {
+  "name": "RS0",
+  "tier": "Standard"
+ },
+ "properties": {
+  "provisioningState": "Succeeded",
+  "privateEndpointStateForBackup": "None",
+  "privateEndpointStateForSiteRecovery": "None",
+  "publicNetworkAccess": "Enabled",
+  "securitySettings": {
+   "softDeleteSettings": {
+    "softDeleteState": "Enabled",
+    "softDeleteRetentionPeriodInDays": 14,
+    "enhancedSecurityState": "Disabled"
+   },
+   "immutabilitySettings": {
+    "state": "Disabled"
+   },
+   "multiUserAuthorization": "Disabled"
+  },
+  "redundancySettings": {
+   "standardTierStorageRedundancy": "LocallyRedundant",
+   "crossRegionRestore": "Disabled"
+  },
+  "monitoringSettings": {
+   "azureMonitorAlertSettings": {
+    "alertsForAllJobFailures": "Disabled"
+   },
+   "classicAlertSettings": {
+    "alertsForCriticalOperations": "Enabled"
+   }
+  }
+ }
+}

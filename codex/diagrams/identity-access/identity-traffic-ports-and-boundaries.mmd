@@ -1,0 +1,54 @@
+%% Identity traffic for Azure Files - every leg, its port, and the legs that cannot be made private - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md and codex/blueprint-azure-file-sync-private-path.md (Microsoft Learn: On-premises AD DS authentication for Azure Files; Configure firewall for AD domains and trusts KB179442; Microsoft Entra Connect troubleshoot connectivity; Access Azure resources with managed identity on Azure Arc-enabled servers)
+flowchart LR
+  subgraph ORG["Contoso network - contoso.local"]
+    WS["Domain-joined workstation - already holds a TGT for CONTOSO.LOCAL"]
+    SRV["File server - File Sync agent v20.0.0.0 or later, Arc-enabled"]
+    HIMDS["Hybrid Instance Metadata Service on that same server"]
+    ADM["Admin station - AzFilesHybrid 0.3.2, Az.Storage 8.1.0 or later, RSAT AD"]
+    DC["Domain controller dc01.contoso.local - KDC for CONTOSO.LOCAL"]
+    IB[("Infoblox grid - authoritative contoso.local plus privatelink forwarders")]
+    AAC["Microsoft Entra Connect Sync or Cloud Sync agent"]
+  end
+  subgraph ER["ExpressRoute private peering"]
+    CKT["circuit and gateway"]
+  end
+  subgraph SPOKE["Private-endpoint spoke VNet"]
+    PEF["Private endpoint - sub-resource file - 1 IP"]
+    PEA["Private endpoint - sub-resource afs - 4 IPs"]
+  end
+  SA[("Storage account stmtyfiles01 - directoryServiceOptions AD - defaultAction Deny")]
+  SSS["Storage Sync Service"]
+  subgraph PUBLIC["Public Microsoft endpoints - no private path exists for these legs in this design"]
+    ENTRA["Microsoft Entra ID - login.microsoftonline.com, adminwebservice.microsoftonline.com, graph.microsoft.com"]
+    ARM["management.azure.com - the join call and every role assignment"]
+    CRL["CRL and OCSP - mscrl.microsoft.com, ocsp.digicert.com, crl3.digicert.com"]
+    ARC["Azure Arc service endpoints for the Connected Machine agent"]
+  end
+
+  WS -->|"DNS UDP and TCP 53"| IB
+  IB -->|"answer 10.x from privatelink.file.core.windows.net"| WS
+  WS -->|"Kerberos TCP and UDP 88 - TGS-REQ for cifs/stmtyfiles01.file.core.windows.net"| DC
+  DC -->|"service ticket, AES-256, PAC carries every group SID"| WS
+  WS -->|"SMB TCP 445 carrying the service ticket"| CKT
+  CKT --> PEF
+  PEF -->|"Microsoft backbone, never the public endpoint"| SA
+  SRV -->|"FileREST HTTPS 443 - no SMB, no Kerberos ticket, no DC dependency"| CKT
+  CKT --> PEA
+  PEA --> SSS
+  SRV -->|"HTTPS 443 FileREST for file data and recalls"| PEF
+  SRV -->|"token request that never leaves the host - IMDS_ENDPOINT on TCP 40342"| HIMDS
+  ADM -->|"LDAP TCP and UDP 389, LDAPS TCP 636, ADWS TCP 9389 - Get-ADComputer and Set-ADAccountPassword"| DC
+  ADM -->|"kpasswd TCP and UDP 464 - Update-AzStorageAccountADObjectPassword"| DC
+  ADM -->|"HTTPS 443 - Join-AzStorageAccount writes activeDirectoryProperties"| ARM
+  ARM -->|"control plane only - the mount itself never calls ARM"| SA
+  AAC -->|"HTTPS 443 group and user sync - CANNOT be made private"| ENTRA
+  AAC -.->|"HTTP 80 certificate revocation - CANNOT be made private"| CRL
+  SRV -.->|"HTTPS 443 agent heartbeat and identity - public in this design"| ARC
+  SSS -->|"change enumeration on the trusted-services path - Microsoft backbone, not ExpressRoute"| SA
+  ENTRA -.->|"synced group object id is the principal in the share-scoped role assignment"| ARM
+
+  NOTE1["The mount path is DNS to Infoblox, Kerberos to Contoso KDC, SMB 445 to the private endpoint. It never contacts Microsoft Entra ID. Entra appears only ahead of time, in the group sync and the role assignment."]
+  NOTE2["Azure Files reads the group SIDs out of the ticket, so a user who is not synced still gets access through a synced group."]
+  NOTE1 -.-> WS
+  NOTE2 -.-> SA

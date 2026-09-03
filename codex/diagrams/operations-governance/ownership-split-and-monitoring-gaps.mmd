@@ -1,0 +1,54 @@
+%% Who owns which control after handover - Microsoft, Contoso, the consulting team - and the gaps where no signal exists
+%% Source: codex/blueprint-azure-file-sync-private-path.md for the three legs and what Microsoft initiates, codex/blueprint-azure-files-backup-protection.md for the Azure-internal backup paths, codex/blueprint-azure-dns-for-private-endpoints.md for the Infoblox boundary, the kit README for the assessment artifacts, and Microsoft Learn on the Telemetry event log, cross-region restore availability and metric refresh intervals, read 2026-09-03
+flowchart TB
+  subgraph MS["Microsoft operates - Contoso cannot change it and cannot alert on it directly"]
+    MS1["Storage Sync Service control plane and the sync job scheduler"]
+    MS2["The leg Microsoft initiates - Storage Sync Service to storage account for change<br/>enumeration and cloud endpoint operations, on the trusted-services path"]
+    MS3["Azure Backup orchestration, the infinite snapshot lease and the vault-standard transfer"]
+    MS4["Platform metric emission every 15 to 20 minutes and the built-in vault alerts"]
+    MS5["Agent flighting, region pairing and the paired-region copy behind cross-region restore"]
+  end
+  subgraph CO["Contoso operates - transferred at the Day 0 gate"]
+    CO1["Windows file servers, the agent update policy per server and the antivirus exclusions"]
+    CO2["Volume free space and the cloud tiering policy on every server endpoint"]
+    CO3["Infoblox grid - the privatelink conditional forwarders and every IPAM record"]
+    CO4["AD DS, the storage account computer object and Kerberos AES-256"]
+    CO5["Action group ag-organization-storage, the on-call rota and first response"]
+    CO6["Storage firewall, private endpoint approvals, policy exemptions and their expiry"]
+    CO7["Backup policy retention against the records schedule, and executing restores"]
+    CO8["Change check-out and check-in for every deliberate change"]
+  end
+  subgraph DT["Consulting team delivers, then hands over"]
+    DT1["Codex blueprints, playbooks and runbooks with the declared artifact registry"]
+    DT2["Bicep with pinned AVM module versions and the gate rules"]
+    DT3["The alert rule set with its thresholds, and the action group wiring"]
+    DT4["The assessment kit, the baseline export and the reassessment procedure"]
+    DT5["Restore-test and alert-test evidence recorded against the engagement"]
+  end
+  subgraph GAP["No automatic signal - these are found by a person or by the quarterly reassessment"]
+    G1["An Infoblox forwarder is deleted or re-pointed. Nothing alerts. Sync keeps working<br/>on cached answers, then fails hours later and looks like a storage fault."]
+    G2["A private endpoint connection is left in Pending. There is no metric for it -<br/>the assessor and az network private-endpoint show are the only detectors."]
+    G3["Vault immutability is still Unlocked months after the restore test.<br/>Compliant on paper, unprotected against an admin with vault rights."]
+    G4["A policy exemption outlives its reason. Compliance stays green because the<br/>exemption says so - only the expiry-date review catches it."]
+    G5["Cross-region restore readiness. It can take up to 48 hours to become usable<br/>after enabling, and nothing tells you it is not ready until you need it."]
+    G6["The storage account AD DS computer object password or its AES-256 setting.<br/>Direct SMB mounts break, File Sync does not - so half the estate looks healthy."]
+    G7["The ExpressRoute circuit itself. A circuit fault presents as sync and SMB failures<br/>on every server at once, and belongs to the network team, not the storage team."]
+  end
+  MS2 -.->|"cannot be moved to ExpressRoute, so it must never be firewalled off"| CO6
+  MS3 -.->|"depends on bypass AzureServices and on allowSharedKeyAccess staying true"| CO6
+  MS4 -->|"is what Contoso alert rules consume"| CO5
+  MS5 -.->|"readiness is invisible until a drill"| G5
+  CO1 -->|"agent expiry and recall spikes surface here"| CO5
+  CO3 -.->|"silent dependency of the whole private path"| G1
+  CO4 -.->|"silent dependency of direct SMB access"| G6
+  CO6 -.->|"approval state and exemptions"| G2
+  CO7 -.->|"immutability lock step is easy to skip"| G3
+  CO6 -.->|"exemption expiry"| G4
+  DT1 -->|"handed to"| CO8
+  DT2 -->|"handed to"| CO6
+  DT3 -->|"handed to"| CO5
+  DT4 -->|"the quarterly oracle that closes the gaps below"| GAP
+  DT5 -->|"the record Contoso audits against"| CO8
+  RULE["Rule of the handover. Every box in Contoso column has a named owner in the<br/>Contoso IT organisation, and every box in the gap column has a scheduled human check.<br/>An unowned control is not a control."]
+  RULE -.->|"binds"| CO
+  RULE -.->|"binds"| GAP

@@ -1,0 +1,48 @@
+%% Lifecycle of one private endpoint connection - the four Azure states plus the two operational states that decide whether traffic actually flows
+%% Source: Microsoft Learn - What is a private endpoint (connection status Pending, Approved, Rejected, Disconnected; approval action Microsoft.Provider/resource_type/privateEndpointConnectionsApproval/action); codex/runbook-private-endpoint-name-resolution-and-reachability.md classes 2, 3 and 5
+stateDiagram-v2
+  direction TB
+
+  state "Not created - the account is reachable on its public endpoint only" as Absent
+  state "Pending - created by an identity without privateEndpointConnectionsApproval on the target" as Pending
+  state "Rejected - the resource owner declined. No traffic, ever" as Rejected
+  state "Approved - the platform will carry traffic to the private-link resource" as Approved
+  state "Approved but unresolvable - the NIC holds the IP, nothing answers the name with it" as Unresolvable
+  state "Approved and serving - clients resolve to the NIC IP and reach it" as Serving
+  state "Disconnected - the resource owner removed the connection. The endpoint is now informative and should be deleted" as Disconnected
+
+  [*] --> Absent
+  Absent --> Approved : created by an owner of the storage account or Storage Sync Service, auto-approved
+  Absent --> Pending : created cross-subscription or by a network team without rights on the target
+  Pending --> Approved : approve on the target resource Private endpoint connections blade
+  Pending --> Rejected : owner declines
+  Rejected --> [*] : delete and recreate with an authorised identity
+  Approved --> Unresolvable : no DNS zone group, or a duplicate privatelink zone linked to the same VNet answers NXDOMAIN
+  Unresolvable --> Serving : attach the DNS zone group to the central zone, add the Infoblox forwarder, Clear-DnsClientCache
+  Approved --> Serving : DNS zone group writes the A record and the Infoblox forwarder is in place
+  Serving --> Unresolvable : endpoint recreated with a new IP while a hand-made A record or hosts entry still points at the old one
+  Serving --> Disconnected : connection deleted on the target resource
+  Disconnected --> [*] : delete the orphaned endpoint and its IPAM reservation
+
+  note right of Pending
+    az network private-endpoint show
+    query privateLinkServiceConnections[0]
+    privateLinkServiceConnectionState.status
+    Assessor rule NET-03 fires here
+  end note
+
+  note right of Unresolvable
+    This is the dangerous state.
+    Nothing is broken until the storage
+    firewall goes to Deny - then every
+    client fails at once with 403.
+    Never lock down from this state.
+  end note
+
+  note right of Serving
+    Gate - Resolve-DnsName returns the
+    CNAME to the privatelink name and a
+    10.x A record on EVERY Contoso server,
+    and Test-NetConnection on 445 and 443
+    is True. Only then set defaultAction Deny.
+  end note

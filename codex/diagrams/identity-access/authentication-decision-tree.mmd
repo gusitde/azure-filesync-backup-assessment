@@ -1,0 +1,42 @@
+%% Authentication decision tree for an Azure file share - identity source, share-permission model and ACL tooling - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md and docs/RULES.md SEC-07 (Microsoft Learn: Overview of Azure Files identity-based authentication; On-premises AD DS authentication; Microsoft Entra Kerberos authentication; Configure directory and file-level permissions)
+flowchart TB
+  Q0{"Does anything mount this share other than the Azure File Sync servers ?"}
+  AFSONLY["No identity source needed. File Sync uses the FileREST API, not SMB. Users hit the Windows Server, which enforces the NTFS ACLs it already carries. SEC-07 is informational on these accounts."]
+  Q1{"One identity source per storage account and it applies to every share in it. Are the clients joined to contoso.local with unimpeded network connectivity to a domain controller ?"}
+  Q2{"Are the clients Microsoft Entra joined or Entra hybrid joined, or are they Azure Virtual Desktop or macOS clients, or cloud-only identities ?"}
+  Q3{"Is Microsoft Entra Domain Services already deployed and are the consumers Azure VMs joined to that managed domain ?"}
+  ADDS["Identity source AD DS. directoryServiceOptions AD. Join with AzFilesHybrid 0.3.2 Join-AzStorageAccount, computer account in OU=AzureFiles, AES-256 Kerberos. THE CHOSEN OPTION for scans and GIS shares."]
+  AADKERB["Identity source Microsoft Entra Kerberos. directoryServiceOptions AADKERB. Ticket encryption is always AES-256. Clients need CloudKerberosTicketRetrievalEnabled and the storage account app excluded from MFA conditional access."]
+  AADDS["Identity source Microsoft Entra Domain Services. directoryServiceOptions AADDS. Not in scope for Contoso - it would add a second managed domain next to contoso.local."]
+  KEYONLY["No identity-based auth. Account key over NTLMv2 only. This is what Contoso runs today on the directly-mounted shares and what SEC-07 flags."]
+
+  Q4{"Can the AD groups that own the data be synced to Entra ID with Entra Connect Sync or Cloud Sync ?"}
+  GRAN["Granular share-level permissions. Assign Storage File Data SMB Share Reader, Contributor or Elevated Contributor to the SYNCED GROUP at fileshares scope. Only the group must sync - member users need not, because the domain controller puts every group SID in the Kerberos ticket and Azure Files reads the SIDs. Allow up to 30 minutes to propagate."]
+  DEFPERM["Default share-level permission on the storage account. Applies to all authenticated identities in the joined AD DS. The only option for computer accounts, sMSA and gMSA, which have no Entra object. Set it to the LOWEST role that works - it is None at initialization."]
+  Q5{"Which tool will set the directory and file ACLs ?"}
+  ICACLS["icacls or Windows File Explorer. Requires a Windows client with unimpeded network connectivity to a contoso.local domain controller. File Explorer additionally requires the client to be joined to the same domain."]
+  PORTAL["Azure portal or the RestSetAcls PowerShell module. No domain controller dependency, but supported only when the identity source is Microsoft Entra Kerberos."]
+  ADMIN["Mount once with Storage File Data SMB Admin and use takeown plus icacls, instead of mounting with the storage account key. Same result, no key in a script."]
+  HARDEN["Then set the SMB profile - authenticationMethods Kerberos, kerberosTicketEncryption AES-256, versions SMB3.0 and SMB3.1.1 - only after the Transactions metric split by Authentication shows zero AccountKey traffic."]
+
+  Q0 -->|"no, File Sync only"| AFSONLY
+  Q0 -->|"yes, workstations or app servers mount it"| Q1
+  Q1 -->|"yes - Contoso workstations on the ExpressRoute-connected network"| ADDS
+  Q1 -->|"no"| Q2
+  Q2 -->|"yes"| AADKERB
+  Q2 -->|"no"| Q3
+  Q3 -->|"yes"| AADDS
+  Q3 -->|"no - nothing can present a Kerberos ticket"| KEYONLY
+  ADDS --> Q4
+  AADKERB --> Q4
+  Q4 -->|"yes - the normal Contoso path"| GRAN
+  Q4 -->|"no, or the principal is a machine account"| DEFPERM
+  GRAN --> Q5
+  DEFPERM --> Q5
+  Q5 -->|"AD DS identity source"| ICACLS
+  Q5 -->|"Entra Kerberos identity source"| PORTAL
+  ICACLS --> ADMIN
+  PORTAL --> HARDEN
+  ADMIN --> HARDEN
+  KEYONLY -.->|"remediation path is the left branch of this tree"| Q1

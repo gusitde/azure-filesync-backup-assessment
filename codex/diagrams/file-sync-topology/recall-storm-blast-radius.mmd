@@ -1,0 +1,72 @@
+%% Recall storms - what starts one, how far the damage travels, and the exact control that contains each source
+%% Source: Microsoft Learn "Plan an Azure File Sync deployment" (antivirus, backup, Windows Search sections), "How to manage Azure File Sync tiered files" (HeatTrackingProcessNamesExclusionList, GhostingExclusionList, recall order), "Troubleshoot Azure File Sync cloud tiering" (recall HRESULTs, event 9059 identifies the application), read 2026-09-03; docs/RULES.md TIER-06, SRV-02, SRV-04
+flowchart LR
+  subgraph TRIG["What opens tiered files in bulk - every one of these reads file DATA, not just the namespace"]
+    AV["Antivirus on-demand or scheduled full scan by a product that ignores FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS"]
+    BK["A server-side backup agent walking the endpoint - the classic Contoso finding SRV-02"]
+    IDX["Windows Search indexing, or a Windows client with Always search file names and contents turned on"]
+    DLP["Data classification, DLP or eDiscovery crawlers that must read content to classify it"]
+    MIG["A migration or reporting job - robocopy without LFSM, a dir walker, a checksum or duplicate-file report"]
+    PR["Proactive recall - LocalCacheMode DownloadNewAndModifiedFiles - or an initial download policy of NamespaceThenModifiedFiles on a fresh endpoint"]
+  end
+
+  subgraph FIRST["First-order effect on the server endpoint"]
+    R1["StorageSync.sys recalls file content over HTTPS 443 FileREST through the file private endpoint"]
+    R2["Heat map is flattened - every scanned file gets the same last access time, so the tiering order stops reflecting real user behaviour"]
+    R3["Recalled data lands on the volume and free space falls toward the policy"]
+  end
+
+  subgraph BLAST["Blast radius - what it takes with it"]
+    B1["Volume crosses the low disk threshold - low disk space mode, recalls stop being persisted, users reopen the same file and pay for it twice"]
+    B2["Recall failures appear - 0x80070070 ERROR_DISK_FULL, 0x80070079 ERROR_SEM_TIMEOUT from high recall in a short window or Azure-side throttling"]
+    B3["Egress and transaction charges on the storage account. Rule TIER-06 fires at StorageSyncRecallTotalSizeBytes above 500 GiB in a day"]
+    B4["The ExpressRoute circuit carries the recall traffic - the same circuit Contoso uses for SMB 445 to the share and for everything else"]
+    B5["Sync sessions and the tiering job compete with the recall load, so uploads lag and the endpoint health turns yellow"]
+    B6["Only this server endpoint degrades. The Azure file share, the other server endpoints and Azure Backup are untouched - the sync group is the containment boundary"]
+  end
+
+  subgraph FIX["Containment - one control per source"]
+    F1["Confirm the AV vendor honours FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS. Microsoft Defender and System Center Endpoint Protection skip these files on demand scans. Otherwise exclude the endpoint path from full scans"]
+    F2["Never back up a tiered endpoint from the server. Back up the Azure file share with Azure Backup. If an on-premises backup is mandatory, run it on a sync group member with cloud tiering OFF"]
+    F3["Stop Windows Search on the endpoint path or remove the path from the index scope. Windows Search skips files that are already tiered, but the client-side content-search setting still forces recalls"]
+    F4["Add the scanner process names to HeatTrackingProcessNamesExclusionList so the crawl does not rewrite last access times. Data Deduplication and FSRM processes are already excluded by default, and changes are picked up within five minutes"]
+    F5["Keep permanently hot content local with GhostingExclusionList by extension, file name or folder path, then restart FileSyncSvc"]
+    F6["Enable proactive recall only where a branch really needs a warm cache, and size the volume for it first"]
+    F7["Pull content deliberately instead of accidentally - Invoke-StorageSyncFileRecall with -ThreadCount up to 32 and -Order CloudTieringPolicy, which stops at the tiering policy limit instead of filling the volume. Recall needs at least 1 Mbps or files time out"]
+  end
+
+  subgraph DET["Detection before the bill arrives"]
+    D1["Telemetry 9059 gives recall bytes per application - it names the process that is doing this"]
+    D2["Telemetry 9005, 9006 and 9009 give recall reliability, error distribution and session totals"]
+    D3["Azure Monitor metric alerts - cloud tiering recall size, recall size by application, cache hit rate, and the low disk space mode alert"]
+  end
+
+  AV --> R1
+  BK --> R1
+  IDX --> R1
+  DLP --> R1
+  MIG --> R1
+  PR --> R1
+  AV --> R2
+  DLP --> R2
+  IDX --> R2
+  R1 --> R3
+  R1 --> B3
+  R1 --> B4
+  R3 --> B1
+  B1 --> B2
+  R1 --> B5
+  B5 --> B6
+  R2 -->|"the wrong files get tiered next hour, which causes the NEXT wave of recalls"| R1
+
+  AV --> F1
+  BK --> F2
+  IDX --> F3
+  DLP --> F4
+  MIG --> F7
+  PR --> F6
+  R2 --> F4
+  R3 --> F5
+  B3 --> D3
+  R1 --> D1
+  B2 --> D2

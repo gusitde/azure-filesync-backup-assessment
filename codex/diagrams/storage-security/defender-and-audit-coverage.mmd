@@ -1,0 +1,46 @@
+%% What actually watches a Contoso file share - Defender for Storage coverage, its documented gaps for SMB shares, and the audit trail that has to fill them
+%% Source: Microsoft Learn - What is Microsoft Defender for Storage (activity monitoring across Blob, Files and ADLS, hash reputation analysis does not support SMB file shares, per-account pricing); Introduction to Defender for Storage malware scanning (on-upload not supported for Azure Files, 50 GB limit, StorageDataScanner resource instance); Prevent authorization with Shared Key (detection queries); codex/blueprint-azure-files-secure-storage-account.md step 7
+flowchart TB
+  PLAN["Defender for Storage plan. Enable at the SUBSCRIPTION so every existing and future Contoso account is covered, then exclude by exception. Per-account enablement is the fallback, and pricing is per storage account"]
+
+  subgraph COVERED["Covered on an Azure Files account"]
+    ACT["Activity monitoring. Continuously analyses control-plane AND data-plane telemetry for Blob, Files and ADLS. It needs no diagnostic setting and no agent"]
+    SASDET["Detection of entities with no identity - activity through over-permissive or leaked SAS. Directly relevant while allowSharedKeyAccess stays true for Backup"]
+    SENS["Sensitive data threat detection. Configurable, no extra charge, uses Purview sensitive information types to weight the alerts"]
+    ONDEM["On-demand malware scanning. Can target a specific file share, up to 50 GB per object, used for a baseline sweep or during an incident"]
+  end
+
+  subgraph GAPS["Documented gaps on an SMB file share - say these out loud in the report"]
+    NOUP["On-upload malware scanning is NOT supported for Azure Files. A file written to the share is never scanned as it lands"]
+    NOHASH["Hash reputation analysis explicitly does not support SMB file shares"]
+    NOSMB["Nothing here inspects an SMB write. Ransomware that encrypts a server endpoint and lets File Sync upload the result is a SERVER-side event"]
+    NOTAG["Malware scan results are returned as blob index tags, which is a blob concept - plan on alerts, Event Grid or the Log Analytics results table instead"]
+  end
+
+  subgraph FILL["What fills the gaps"]
+    MDE["Endpoint protection on Contoso file servers themselves, where the SMB write actually happens"]
+    BKP["The backup chain - snapshot tier plus vault tier with immutability and soft delete. The recovery point is the control that survives an encryption event, not a detection"]
+    SD["Share soft delete, 14 days or more. It undeletes a share and its snapshots, and it is not a substitute for either of the above"]
+  end
+
+  subgraph AUDIT["The audit trail Contoso owns"]
+    DIAG["Diagnostic setting on fileServices default - StorageRead, StorageWrite and StorageDelete to Contoso Log Analytics workspace"]
+    TABLE["StorageFileLogs. AuthenticationType proves the shared-key retirement, CallerIpAddress proves which source really hit the data plane, and it is the only honest source for a 403 investigation"]
+    MET["Transactions metric split by the Authentication dimension, for the aggregate that the log query cannot cheaply produce"]
+  end
+
+  NETNOTE["Networking interaction to plan for. When the account firewall is restricted, Defender deploys a StorageDataScanner resource with a system-assigned identity and ADDS IT TO THE RESOURCE INSTANCES of networkAcls. Expect a resourceAccessRule you did not write, next to the Storage Sync Service rule you did"]
+  EGNOTE["Second interaction. Malware scanning deploys an Event Grid system topic in the same resource group as the account, and Event Grid topics without public network access are not supported for scan-result delivery"]
+  ALERTS["Alerts land in Defender for Cloud security alerts, and are exported to Microsoft Sentinel or another SIEM from there"]
+
+  PLAN --> COVERED
+  PLAN --> GAPS
+  PLAN -->|"changes the account network configuration"| NETNOTE
+  ONDEM --> EGNOTE
+  GAPS --> FILL
+  COVERED --> ALERTS
+  DIAG --> TABLE
+  DIAG --> MET
+  TABLE -->|"evidence for SEC-04 and for every lock-down 403"| ALERTS
+  NOSMB -.->|"the detection has to happen here instead"| MDE
+  NOUP -.->|"the recovery has to exist instead"| BKP

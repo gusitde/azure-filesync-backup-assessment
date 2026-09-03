@@ -1,0 +1,64 @@
+%% Who holds which role to do which identity task - least privilege for Contoso operators and for the platform's own identities - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md, codex/playbook-enable-file-sync-private-endpoint-and-cutover.md, codex/playbook-enable-azure-backup-for-file-shares.md, docs/RULES.md SEC-13 (Microsoft Learn: Enable AD DS authentication; How to use managed identities with Azure File Sync; Configure directory and file-level permissions; Assign share-level permissions)
+flowchart LR
+  subgraph WHO["Principals - never a standing assignment on a named user, always a PIM-eligible group, SEC-13"]
+    ADTEAM["Contoso AD team - rights to create a computer object in OU=AzureFiles and to reset its password"]
+    STORTEAM["Contoso storage team - owns the account, the shares and the SMB profile"]
+    SYNCTEAM["Contoso File Sync operator - owns the Storage Sync Service and the registered servers"]
+    BKPTEAM["Contoso backup operator - owns the Recovery Services vault"]
+    DATAOWNER["Department data owner - owns the DACLs on their own share"]
+    CONSULT["Consultant performing the assessment"]
+  end
+
+  subgraph TASK["The identity tasks"]
+    T1["Domain-join the storage account with Join-AzStorageAccount"]
+    T2["Rotate the AD object password with Update-AzStorageAccountADObjectPassword"]
+    T3["Grant a synced group access to one share"]
+    T4["Set the NTFS DACLs on a share without using the account key"]
+    T5["Turn on managed identity for the Storage Sync Service and its servers"]
+    T6["Harden the account - firewall, SMB profile, soft delete, key expiry policy"]
+    T7["Protect the shares with Azure Backup"]
+    T8["Export and assess the environment"]
+  end
+
+  subgraph ROLE["Minimum Azure role for the task"]
+    P1["Reader on the resource group PLUS Contributor on the storage account - the AD permission is the other half and lives in contoso.local, not in Azure"]
+    P2["Owner on the storage account PLUS the AD right to change the object password"]
+    P3["A role carrying Microsoft.Authorization/roleAssignments/write at the share scope, such as User Access Administrator - Contributor alone cannot create role assignments"]
+    P4["Storage File Data SMB Admin - grants readFileBackupSemantics, writeFileBackupSemantics and takeOwnership, so the admin takes ownership and edits the DACL with no account key"]
+    P5["Azure File Sync Administrator, constrained by an ABAC condition to assigning only Reader and Data Access, Storage File Data Privileged Contributor and Storage Account Contributor - the documented least-privilege alternative to Owner"]
+    P6["Storage Account Contributor - management plane only, it does NOT grant SMB data access"]
+    P7["Backup Contributor on the vault resource group PLUS Contributor on the storage accounts"]
+    P8["Reader on the subscriptions in scope - the assessment never needs a data role or a key"]
+  end
+
+  subgraph PLATFORM["Identities the platform grants to itself when managed identity is enabled - review these, they are privileged"]
+    MI1["Storage Sync Service system-assigned identity - Storage Account Contributor on every storage account it syncs"]
+    MI2["Storage Sync Service system-assigned identity - Storage File Data Privileged Contributor on every share, which OVERRIDES the NTFS ACLs"]
+    MI3["Each registered server system-assigned identity, Arc-enabled on-premises - Storage File Data Privileged Contributor on the shares"]
+    MI4["Azure Backup - no role on the account at all. It reaches the share on the trusted-services path and still requires allowSharedKeyAccess true"]
+  end
+
+  ADTEAM --> T1
+  ADTEAM --> T2
+  STORTEAM --> T1
+  STORTEAM --> T3
+  STORTEAM --> T6
+  SYNCTEAM --> T5
+  BKPTEAM --> T7
+  DATAOWNER --> T4
+  CONSULT --> T8
+
+  T1 --> P1
+  T2 --> P2
+  T3 --> P3
+  T4 --> P4
+  T5 --> P5
+  T6 --> P6
+  T7 --> P7
+  T8 --> P8
+
+  T5 -->|"the cmdlet creates these assignments for you"| MI1
+  T5 --> MI2
+  T5 --> MI3
+  T7 -.->|"no identity is created"| MI4

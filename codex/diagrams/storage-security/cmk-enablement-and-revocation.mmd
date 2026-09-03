@@ -1,0 +1,51 @@
+%% Turning on customer-managed keys for Contoso Files account, and the failure branch when the key is revoked
+%% Source: Microsoft Learn - Customer-managed keys for account encryption (key vault requirements, wrapkey unwrapkey get, user-assigned identity at creation, automatic key version update, revocation behaviour and the Azure Files operations that fail); Recover a deleted storage account (restore the vault first); codex/blueprint-azure-files-secure-storage-account.md step 4
+sequenceDiagram
+  autonumber
+  participant OPS as eng-sysops on the netops-v devstation
+  participant ARM as Azure Resource Manager
+  participant UAMI as User-assigned managed identity id-cmk-stmryfiles01
+  participant AKV as Key Vault kv-organization-storage
+  participant SA as stmryfiles01 file service
+  participant SRV as Contoso File Sync server and SMB clients
+  participant MON as Log Analytics and the assessor
+
+  Note over OPS,AKV: Phase 1 - prerequisites that are not optional
+  OPS->>AKV: confirm soft delete AND purge protection are enabled
+  AKV-->>OPS: both true, otherwise the account update is rejected
+  OPS->>AKV: create an RSA or RSA-HSM key, size 2048, 3072 or 4096
+  OPS->>UAMI: create the identity first
+  Note over OPS,UAMI: A NEW account must use a user-assigned identity. Only an EXISTING account may use a system-assigned one, so the identity is created before the account
+  OPS->>AKV: grant the identity get, wrapKey and unwrapKey on the key
+  AKV-->>OPS: access policy or RBAC assignment recorded
+
+  Note over OPS,SA: Phase 2 - point the account at the key
+  OPS->>ARM: set encryption keySource to Microsoft.Keyvault, name the vault, the key and the identity, and OMIT the key version
+  ARM->>SA: apply
+  SA->>AKV: wrap the account encryption key with the customer-managed key
+  AKV-->>SA: wrapped key returned
+  SA-->>ARM: protection is effective immediately, the data itself was never re-encrypted
+  Note over SA,AKV: Omitting the version means Azure Storage checks the vault ONCE A DAY for a newer version. After rotating, wait 24 hours before disabling the old version
+
+  Note over SRV,AKV: Phase 3 - steady state
+  SRV->>SA: SMB 3.1.1 or FileREST request over the private endpoint
+  SA->>AKV: unwrap the account encryption key
+  AKV-->>SA: unwrapped
+  SA-->>SRV: read or write served
+
+  alt the key is available and the identity still holds get, wrapKey and unwrapKey
+    SA-->>MON: normal traffic. Note that a key ROTATION in the vault is not written to the storage resource logs, so the rotation record has to come from the vault side
+  else the key is disabled or deleted, or the identity loses its grant
+    SRV->>SA: List Directories and Files, Create File, Get File, Get File Properties, Put Range
+    SA->>AKV: unwrap
+    AKV-->>SA: denied
+    SA-->>SRV: 403 Forbidden for ALL users, on exactly that documented list of Azure Files operations
+    SRV-->>MON: File Sync 9102 with a non-zero HResult, backup jobs fail, direct mounts stop serving data
+    Note over OPS,AKV: This is the intended emergency revocation switch, not a bug. It is also the accident that a vault clean-up causes
+    OPS->>AKV: re-enable the key version or restore the grant
+    AKV-->>SA: unwrap succeeds again
+    SA-->>SRV: service resumes with no data re-encryption and no restore
+  end
+
+  Note over OPS,MON: Ordering trap for a disaster - if the storage account AND the vault were both deleted, the vault must be restored BEFORE the account restore is attempted, and account recovery is best-effort within 14 days
+  Note over OPS,MON: Contoso decision on record - platform-managed keys meet the baseline. CMK is adopted only if Contoso policy mandates it, because it adds the vault, the identity, the daily version check and this revocation path to the blast radius of every share

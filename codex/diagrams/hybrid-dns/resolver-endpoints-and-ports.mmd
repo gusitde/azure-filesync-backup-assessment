@@ -1,0 +1,62 @@
+%% Hybrid DNS control plane in the hub - both resolver endpoints, the port each leg actually uses, and the documented limits
+%% Source: Microsoft Learn "Azure DNS Private Resolver overview" and "Azure DNS Private Resolver endpoints and rulesets" (read 2026-09-03); codex/blueprint-azure-dns-for-private-endpoints.md step 2; codex/playbook-deploy-dns-private-resolver-and-forwarders.md dns.bicep
+flowchart LR
+  subgraph Contoso["Contoso network - Infoblox is authoritative for contoso.local"]
+    IB1["Infoblox grid member 10.1.10.10 - forward zones for the seven privatelink names, recursion for everything else"]
+    IB2["Infoblox grid member 10.1.10.11 - second target on every rule and every forwarder"]
+    FS["Registered file servers - Azure File Sync agent v20 or later"]
+    APP["Azure Migrate appliance"]
+    WS["Workstations and applications mounting shares directly"]
+  end
+
+  subgraph ER["ExpressRoute private peering - the only path that carries DNS and data"]
+    CKT["Circuit and ExpressRoute gateway in the hub"]
+  end
+
+  subgraph Hub["Hub VNet - one DNS private resolver, one VNet, same region"]
+    SNIN["snet-dnspr-inbound - /28 minimum to /24 maximum, delegated to Microsoft.Network/dnsResolvers, no other resource may share it"]
+    SNOUT["snet-dnspr-outbound - separate /28, same delegation, endpoints cannot share a subnet"]
+    IN["Inbound endpoint 10.100.20.4 - allocation Static so the address survives a reprovision. Dynamic would take the fifth address in the subnet and can move"]
+    OUT["Outbound endpoint - no IP of its own, it is the egress attachment for the ruleset"]
+    RS["Ruleset dnsfrs-hub-westus-01 - rule organization-local for contoso.local. to 10.1.10.10 and 10.1.10.11 on port 53"]
+  end
+
+  AZ(("Azure DNS 168.63.129.16 - cannot be used as a forwarding rule destination, the rule is rejected"))
+
+  subgraph Zones["Private DNS zones - one of each, linked to the hub and to every spoke"]
+    Z1[("privatelink.file.core.windows.net")]
+    Z2[("privatelink.afs.azure.net")]
+    Z3[("privatelink.blob.core.windows.net")]
+    Z4[("privatelink.queue.core.windows.net")]
+    Z5[("privatelink.vaultcore.azure.net")]
+    Z6[("privatelink.prod.migration.windowsazure.com")]
+    Z7[("privatelink.siterecovery.windowsazure.com")]
+  end
+
+  subgraph Spoke["Private-endpoint spoke - ruleset link and zone links, peering optional for DNS"]
+    VM["Azure VM that must join contoso.local"]
+    PE["Private endpoints - file, afs, blob, queue, vault, migrate, siterecovery"]
+  end
+
+  IB1 -->|"UDP and TCP 53 forward-only, privatelink names only"| CKT
+  IB2 -->|"UDP and TCP 53 forward-only, privatelink names only"| CKT
+  CKT --> IN
+  IN -->|"resolves the zones linked to the hub VNet"| AZ
+  AZ --> Zones
+  Zones -->|"A record written by the DNS zone group on each endpoint"| PE
+
+  VM -->|"contoso.local query, Azure-provided DNS"| AZ
+  AZ -->|"suffix match on the linked ruleset"| RS
+  RS --> OUT
+  OUT -->|"UDP and TCP 53 out of Azure"| CKT
+  CKT --> IB1
+
+  FS -->|"HTTPS 443 FileREST and sync control after the name resolves"| CKT
+  WS -->|"SMB 445 after the name resolves"| CKT
+  APP -->|"HTTPS 443 to every FQDN in Download DNS settings"| CKT
+  CKT --> PE
+
+  LIM["Limits that shape this design. 15 resolvers per subscription. 5 inbound and 5 outbound endpoints per resolver. 1000 rules per ruleset. 500 VNet links per ruleset, same region only. 2 outbound endpoints per ruleset and 2 rulesets per outbound endpoint. 6 target DNS servers per rule. 10,000 QPS per endpoint."]
+  RES["Restrictions to state in the design review. No ExpressRoute FastPath. No IPv6 subnets. Not compatible with Azure Lighthouse. No encrypted VNets. One VNet per resolver and one resolver per VNet. Never link the ruleset to the hub when a rule targets the hub inbound endpoint - that is a resolution loop."]
+  Hub -.-> LIM
+  Hub -.-> RES

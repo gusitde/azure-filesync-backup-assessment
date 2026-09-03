@@ -1,0 +1,27 @@
+%% Azure Backup for Azure file shares behind File Sync - data paths, tiers and restores - Contoso profile
+%% Source: codex/blueprint-azure-files-backup-protection.md (Microsoft Learn: About Azure Files backup; Restore Azure Files; support matrix)
+flowchart LR
+  subgraph Azure[Azure - every backup flow is Azure-internal]
+    SA[("Storage account - shares home, dept, archive - share soft delete 14 d")]
+    SNAP[Share snapshots - every 4 h, 30 days - leased by Backup]
+    RSV[Recovery Services vault - GRS + cross-region restore - soft delete always-on - immutability locked - MUA]
+    VLT[Vault-standard tier - daily 90 d, monthly 12, yearly 7 - offsite, immutable]
+    AL[Azure Monitor alerts - all job failures to action group]
+    LA[("Log Analytics - Backup reports")]
+    PAIR[("Paired region - cross-region restore target")]
+  end
+  subgraph Contoso[Contoso]
+    FS[File Sync servers - private path over ExpressRoute]
+    ADM[Backup admin - portal / PowerShell]
+  end
+  SA -->|scheduled snapshot| SNAP
+  SNAP -->|changed blocks of the last daily snapshot| VLT
+  RSV --- VLT
+  RSV --> AL
+  RSV --> LA
+  SNAP -->|item-level restore, original or alternate| SA
+  SNAP -->|full-share restore| SA
+  VLT -->|full-share restore to alternate location, 20% free space| SA
+  VLT -->|cross-region restore| PAIR
+  SA -->|File Sync change detection for restored paths| FS
+  ADM -.->|management plane only| RSV

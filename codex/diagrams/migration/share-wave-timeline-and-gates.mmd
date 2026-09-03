@@ -1,0 +1,24 @@
+%% Phased timeline for one share migration wave with the gate that closes each phase - Contoso profile
+%% Source: Microsoft Learn "Migrate data into Azure File Sync with Azure Data Box" (phase order, Data Box lead time and share mapping), "Migrate to Azure Files using RoboCopy" (repeated passes then a final pass under freeze), "How to use DFS-N with Azure Files" (name takeover is a scheduled outage), codex/playbook-enable-identity-based-auth-ad-ds.md
+timeline
+  title Share migration wave - phases and the gate that must pass before the next one starts
+  section Plan
+    T minus 45 days : Inventory the department shares with size, item count, owner and retention class : Map each share to a storage account, staying under 30 Azure file shares per registered server : GATE. Mapping table signed by the department records officer
+    T minus 40 days : Choose the transport per share and record why : Order the Data Box if the wire seed misses the window, allowing one to two weeks each way : GATE. One transport named per share, none of the excluded tools chosen
+  section Build
+    T minus 30 days : Deploy the storage account, the large file share and the file private endpoint : Join the account to AD DS with AES-256 and set share-level RBAC on Contoso groups : GATE. A Contoso client mounts the share by FQDN over ExpressRoute with a Kerberos ticket
+    T minus 28 days : Set the ACLs on the root directory of the target share before any bulk copy : Enable Azure Backup with the 4-hourly snapshot policy and share soft delete at 14 days : GATE. A restore of one test file completes from a snapshot
+  section Seed
+    T minus 21 days : Bulk seed runs. Data Box copied over SMB with the documented robocopy line, or File Sync uploads over ExpressRoute : GATE. Data Box order reaches Completed with no unreviewed copy errors, or first sync reports zero files failing
+    T minus 14 days : Attach File Sync with initial upload ServerAuthoritative only if the hierarchy matches exactly, otherwise Merge : GATE. Cloud change enumeration finishes and telemetry event 9102 reports HResult 0
+  section Rehearse
+    T minus 10 days : Catch-up pass one and pass two on the live namespace : Time every pass. The last elapsed time is the published downtime estimate : GATE. Pass duration fits the agreed window
+    T minus 7 days : Rehearse the rollback on a scratch share. Re-enable a disabled computer account and restore its SPNs : GATE. Rollback rehearsal produces a working old path again
+    T minus 1 day : Lower the DFS folder referral cache from 1800 seconds to 300 seconds : Freeze notice to the department : GATE. Change record open with the named validator
+  section Cut over
+    Window hour 0 : Power the source file server off and leave it domain-joined : Final mirror pass on the frozen namespace
+    Window hour 1 : Disable the source computer account, remove its HOST SPNs on the PDC emulator, run netdom to add the alternate name, create the CNAME : GATE. From a client, not from the namespace server, klist shows a ticket for the old name and the share contents are correct
+  section Soak and close
+    T plus 1 to 7 days : Watch backup jobs, sync health and share throttling : Keep the source server powered off with its account disabled, which is the rollback : GATE. Seven days with no restore request and no failed backup job
+    T plus 14 days : Raise the folder referral cache back to 1800 seconds : Decommission the source server and remove its storage from the backup schedule
+    T plus 30 days : Re-run the environment export and the assessor : Check the wave into the codex with the evidence bundle : GATE. Validator closes the change, never the owner

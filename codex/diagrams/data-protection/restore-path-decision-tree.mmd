@@ -1,0 +1,42 @@
+%% Choose the recovery source for one data-loss event on a Contoso file share - the decision an engineer follows at the console
+%% Source: codex/runbook-restore-file-share-and-share-soft-delete.md classes 1 to 6; Microsoft Learn "Restore Azure Files", "Support matrix for Azure Files backup", "Azure file share soft delete", "Recover a deleted storage account" (read 2026-09-03)
+flowchart TB
+  START(["Data-loss report on a share of stmtyfiles01<br/>record scope, time of last known good, and who noticed"]) --> Q0
+
+  Q0{"Is the file share object itself missing<br/>from the storage account?"}
+  Q0 -->|no, the share exists| Q1
+  Q0 -->|yes| Q0A
+
+  Q0A{"Is the storage account also gone?"}
+  Q0A -->|"no, only the share"| SOFTDEL
+  Q0A -->|yes| ACCT
+
+  SOFTDEL["Share soft delete<br/>az storage share-rm list --include-deleted shows<br/>the share with a deletedTime and remainingRetentionDays<br/>az storage share-rm restore --deleted-version 01Dxxxxxxxxxxxxx<br/>the share AND every snapshot on it come back<br/>account-level setting, 1 to 365 days, Azure Backup sets it to 14"] --> SYNCBACK
+
+  ACCT{"Deleted less than 14 days ago, ARM account,<br/>resource group still exists,<br/>and no new account has taken the name?"}
+  ACCT -->|yes| ACCTOK["Portal to Storage accounts to Restore<br/>needs Microsoft.Storage/storageAccounts/write<br/>best effort, not guaranteed<br/>WARNING the file private endpoint is deleted with the account<br/>and is NOT recreated - rebuild the PE, the DNS zone group<br/>and the Infoblox forwarder entry before sync resumes"] --> SYNCBACK
+  ACCT -->|no| CRR
+
+  Q1{"Is this a handful of files a user lost,<br/>on a volume where Enable-StorageSyncSelfServiceRestore was run?"}
+  Q1 -->|yes| VSS["Previous Versions tab on the server endpoint<br/>VSS snapshot, no Azure job, no ticket, no RTO<br/>cheapest class - use it before opening a restore"] --> DONE
+  Q1 -->|no| Q2
+
+  Q2{"Are 99 or fewer named files and folders needed?"}
+  Q2 -->|yes| ILR
+  Q2 -->|"no, the whole share is bad"| Q3
+
+  ILR["Item-level restore<br/>Vault to Protected items to the share to File Recovery<br/>SNAPSHOT-tier recovery points only - vaulted backup has no file-level recovery<br/>original or alternate location, conflict Skip or Overwrite<br/>blocked for paths over 2 KB, trailing dots, xFFFF or xFFFE"] --> SYNCBACK
+
+  Q3{"Does a CLEAN recovery point exist whose<br/>underlying share snapshot still exists?"}
+  Q3 -->|yes| FSORIG["Full share restore to the ORIGINAL location<br/>conflict Overwrite<br/>recovery tier must read Snapshot or Snapshot and Vault-tier<br/>if the snapshot behind the point is gone the job fails"] --> SYNCBACK
+  Q3 -->|"no - snapshots expired, tampered with or deleted"| VLT
+
+  VLT["Full share restore from the VAULT-STANDARD point<br/>ALTERNATE location only once the snapshot is gone<br/>target share needs 20 percent MORE free space than the source<br/>Backup stages into MABRestoreScratchFolder on the target<br/>a shortfall fails pre-validation before any byte moves"] --> SYNCBACK
+
+  CRR{"Is the primary region itself the problem,<br/>or is the account unrecoverable?"}
+  CRR -->|yes| CRRDO["Cross-region restore from the GRS vault<br/>rsv-contoso-westus secondary is East US<br/>ONLY vault-standard points replicate - snapshot points do not exist there<br/>up to 48 h after first enabling CRR, then up to 12 h per point<br/>restore into a new account, then build a new cloud endpoint"] --> SYNCBACK
+  CRR -->|"no, and nothing above applies"| NONE["No recovery source left<br/>record it as permanent loss in the incident file<br/>this is the outcome the vault tier exists to prevent"]
+
+  SYNCBACK["Azure Backup hands the restored paths to the Storage Sync Service<br/>background change detection runs in PARALLEL with the restore<br/>the servers pull the restored versions without the 24 h enumeration<br/>never robocopy the data back onto a server endpoint by hand"] --> DONE
+
+  DONE(["Verify on BOTH sides<br/>the share listing and the server listing match<br/>a fresh on-demand backup completes<br/>job id, duration and approver in the incident record"])

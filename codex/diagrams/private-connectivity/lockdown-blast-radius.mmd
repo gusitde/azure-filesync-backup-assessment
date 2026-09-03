@@ -1,0 +1,59 @@
+%% Lock-down blast radius - each switch you can throw, what it breaks first, how far the damage reaches, and what contains it
+%% Source: codex/runbook-file-sync-broken-after-network-lockdown.md classes 1 to 6; codex/runbook-private-endpoint-name-resolution-and-reachability.md; Assess-AzFileSyncExport.ps1 AFS-11, AFS-14, SEC-04, SEC-05, NET-02, NET-03; Microsoft Learn - Configure Azure File Sync network endpoints, Back up Azure Files FAQ (key-based access), Trusted Azure services for Azure Storage
+flowchart LR
+  subgraph SW["The switches, in the order they are usually thrown"]
+    S1["networkAcls.defaultAction set to Deny while bypass AzureServices is missing or was later removed"]
+    S2["publicNetworkAccess set to Disabled on a File Sync storage account. This is the portal Disable button"]
+    S3["incomingTrafficPolicy set to AllowVirtualNetworksOnly before every server resolves the four afs names privately"]
+    S4["Storage firewall set to Deny while the servers still resolve the account name to a public IP"]
+    S5["allowSharedKeyAccess set to false to satisfy a hardening checklist"]
+    S6["Private endpoint deleted, recreated with a new IP, or left Pending or Rejected"]
+  end
+
+  subgraph FIRST["What breaks first - and whether anyone notices"]
+    F1["Cloud change enumeration and cloud endpoint operations fail. Server sync sessions keep running, so the portal looks healthy for hours. Silent"]
+    F2["Every File Sync and every Azure Backup operation on that account fails. Loud and immediate"]
+    F3["Every registered server goes to Appears Offline. Telemetry 9301 stops returning status 0. Loud and immediate"]
+    F4["Sync control keeps working, but upload, download and recall fail. Users see errors only on tiered files. Telemetry 9006 recall errors and 403 in the storage resource logs"]
+    F5["Azure Backup jobs fail even though the network rules are perfectly correct. File Sync survives only if managed identity is already active"]
+    F6["The name still resolves, to a stale or absent address. Nothing breaks until the firewall goes to Deny, then every client fails at once"]
+  end
+
+  subgraph RADIUS["Blast radius - the containment boundary of each switch"]
+    R1["One storage account. Every share and every sync group whose cloud endpoint lives on it"]
+    R2["One storage account, both File Sync and Backup at once"]
+    R3["THE WHOLE ESTATE. A Storage Sync Service spans every sync group and every Contoso site, so this is the single largest blast radius on the project"]
+    R4["One storage account, data plane only. The control plane keeps reporting green"]
+    R5["Backup of every share in that account. Restores fail the same way"]
+    R6["Every client of that private-link resource, on-premises and in Azure"]
+  end
+
+  subgraph CONTAIN["What contains it"]
+    C1["az storage account update --bypass AzureServices, then retry the cloud endpoint operation. Detected by assessor AFS-14"]
+    C2["Set publicNetworkAccess Enabled with defaultAction Deny and bypass AzureServices. Detected by assessor SEC-05"]
+    C3["Set-AzStorageSyncService -IncomingTrafficPolicy AllowAllTraffic. Restores sync in minutes and leaves the endpoints and DNS in place. Detected by AFS-11 and NET-05"]
+    C4["Add the Infoblox forwarder for privatelink.file.core.windows.net, Clear-DnsClientCache, or add the server egress IP as a temporary IP network rule. Detected by NET-02"]
+    C5["Re-enable key access. Azure Backup uses key-based access for backup and restore of Azure Files even when identity-based access is configured. Detected by SEC-04"]
+    C6["Recreate the endpoint with a DNS zone group so the A record is machine-maintained, approve the connection, and never hand-write an A record. Detected by NET-03 and NET-04"]
+  end
+
+  S1 --> F1 --> R1 --> C1
+  S2 --> F2 --> R2 --> C2
+  S3 --> F3 --> R3 --> C3
+  S4 --> F4 --> R4 --> C4
+  S5 --> F5 --> R5 --> C5
+  S6 --> F6 --> R6 --> C6
+
+  RULE1["Containment rule 1 - throw one switch per change window. Two switches in one window means the rollback is a guess"]
+  RULE2["Containment rule 2 - the Storage Sync Service switch goes LAST, because it is the only one with an estate-wide radius and the only one whose rollback is a single cmdlet"]
+  RULE3["Containment rule 3 - the gate is measured on EVERY registered server, not on a sample. One server with a stale resolver cache is one Appears Offline site"]
+  RULE4["Containment rule 4 - type the rollback command before the change command, and soak 24 hours before calling a phase closed"]
+
+  R3 -.->|"why the order matters"| RULE2
+  CONTAIN -.->|"governed by"| RULE1
+  CONTAIN -.->|"governed by"| RULE3
+  CONTAIN -.->|"governed by"| RULE4
+
+  SILENT["The two dangerous ones are S1 and S6. Both leave the portal green. Neither is caught by a smoke test, only by watching the next Telemetry 9102 for HResult 0 and by re-running the assessor"]
+  F1 -.-> SILENT
+  F6 -.-> SILENT

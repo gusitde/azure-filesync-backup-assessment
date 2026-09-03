@@ -1,0 +1,288 @@
+[
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/syncGroups/sg-home/serverEndpoints/se-fs01-home",
+  "name": "se-fs01-home",
+  "type": "Microsoft.StorageSync/storageSyncServices/syncGroups/serverEndpoints",
+  "properties": {
+   "serverLocalPath": "D:\\Home",
+   "cloudTiering": "on",
+   "volumeFreeSpacePercent": 20,
+   "tierFilesOlderThanDays": 60,
+   "friendlyName": "FS01",
+   "serverName": "FS01.contoso.local",
+   "serverResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/registeredServers/fs01",
+   "provisioningState": "Succeeded",
+   "lastWorkflowId": "",
+   "lastOperationName": "",
+   "initialDownloadPolicy": "NamespaceThenModifiedFiles",
+   "localCacheMode": "UpdateLocallyCachedFiles",
+   "initialUploadPolicy": "Merge",
+   "syncStatus": {
+    "downloadHealth": "Healthy",
+    "uploadHealth": "Healthy",
+    "combinedHealth": "Healthy",
+    "syncActivity": "None",
+    "totalPersistentFilesNotSyncingCount": 0,
+    "lastUpdatedTimestamp": "2026-09-03T14:30:00Z",
+    "uploadStatus": {
+     "lastSyncResult": 0,
+     "lastSyncTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncSuccessTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncPerItemErrorCount": 0,
+     "persistentFilesNotSyncingCount": 0,
+     "transientFilesNotSyncingCount": 0,
+     "filesNotSyncingErrors": []
+    },
+    "downloadStatus": {
+     "lastSyncResult": 0,
+     "lastSyncTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncSuccessTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncPerItemErrorCount": 0,
+     "persistentFilesNotSyncingCount": 0,
+     "transientFilesNotSyncingCount": 0,
+     "filesNotSyncingErrors": []
+    }
+   },
+   "cloudTieringStatus": {
+    "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+    "health": "Healthy",
+    "healthLastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+    "lastCloudTieringResult": 0,
+    "lastSuccessTimestamp": "2026-09-03T13:00:00Z",
+    "spaceSavings": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "volumeSizeBytes": 2199023255552,
+     "totalSizeCloudBytes": 1649267441664,
+     "cachedSizeBytes": 549755813888,
+     "spaceSavingsPercent": 75,
+     "spaceSavingsBytes": 1099511627776
+    },
+    "cachePerformance": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "cacheHitBytes": 950,
+     "cacheMissBytes": 50,
+     "cacheHitBytesPercent": 95,
+     "cacheHitRatio": 0.95
+    },
+    "filesNotTiering": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "totalFileCount": 0,
+     "errors": []
+    },
+    "volumeFreeSpacePolicyStatus": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "effectiveVolumeFreeSpacePolicy": 20,
+     "currentVolumeFreeSpacePercent": 21
+    },
+    "datePolicyStatus": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "tieredFilesMostRecentAccessTimestamp": "2026-07-01T00:00:00Z"
+    },
+    "lowDiskMode": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "state": "Disabled"
+    }
+   },
+   "recallStatus": {
+    "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+    "totalRecallErrorsCount": 0,
+    "recallErrors": []
+   }
+  }
+ },
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/syncGroups/sg-dept/serverEndpoints/se-fs01-dept",
+  "name": "se-fs01-dept",
+  "type": "Microsoft.StorageSync/storageSyncServices/syncGroups/serverEndpoints",
+  "properties": {
+   "serverLocalPath": "E:\\Dept",
+   "cloudTiering": "on",
+   "volumeFreeSpacePercent": 5,
+   "tierFilesOlderThanDays": 30,
+   "friendlyName": "FS01",
+   "serverName": "FS01.contoso.local",
+   "serverResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/registeredServers/fs01",
+   "provisioningState": "Succeeded",
+   "lastWorkflowId": "",
+   "lastOperationName": "",
+   "initialDownloadPolicy": "NamespaceThenModifiedFiles",
+   "localCacheMode": "UpdateLocallyCachedFiles",
+   "initialUploadPolicy": "Merge",
+   "syncStatus": {
+    "downloadHealth": "Error",
+    "uploadHealth": "Error",
+    "combinedHealth": "Error",
+    "syncActivity": "PendingUpload",
+    "totalPersistentFilesNotSyncingCount": 12,
+    "lastUpdatedTimestamp": "2026-09-01T03:00:00Z",
+    "uploadStatus": {
+     "lastSyncResult": 0,
+     "lastSyncTimestamp": "2026-09-01T03:00:00Z",
+     "lastSyncSuccessTimestamp": "2026-09-01T03:00:00Z",
+     "lastSyncPerItemErrorCount": 12,
+     "persistentFilesNotSyncingCount": 12,
+     "transientFilesNotSyncingCount": 0,
+     "filesNotSyncingErrors": []
+    },
+    "downloadStatus": {
+     "lastSyncResult": 0,
+     "lastSyncTimestamp": "2026-09-01T03:00:00Z",
+     "lastSyncSuccessTimestamp": "2026-09-01T03:00:00Z",
+     "lastSyncPerItemErrorCount": 0,
+     "persistentFilesNotSyncingCount": 0,
+     "transientFilesNotSyncingCount": 0,
+     "filesNotSyncingErrors": []
+    }
+   },
+   "cloudTieringStatus": {
+    "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+    "health": "Error",
+    "healthLastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+    "lastCloudTieringResult": -2147024784,
+    "lastSuccessTimestamp": "2026-09-03T13:00:00Z",
+    "spaceSavings": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "volumeSizeBytes": 2199023255552,
+     "totalSizeCloudBytes": 1649267441664,
+     "cachedSizeBytes": 549755813888,
+     "spaceSavingsPercent": 75,
+     "spaceSavingsBytes": 1099511627776
+    },
+    "cachePerformance": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "cacheHitBytes": 950,
+     "cacheMissBytes": 50,
+     "cacheHitBytesPercent": 95,
+     "cacheHitRatio": 0.55
+    },
+    "filesNotTiering": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "totalFileCount": 0,
+     "errors": []
+    },
+    "volumeFreeSpacePolicyStatus": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "effectiveVolumeFreeSpacePolicy": 20,
+     "currentVolumeFreeSpacePercent": 21
+    },
+    "datePolicyStatus": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "tieredFilesMostRecentAccessTimestamp": "2026-07-01T00:00:00Z"
+    },
+    "lowDiskMode": {
+     "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+     "state": "Enabled"
+    }
+   },
+   "recallStatus": {
+    "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+    "totalRecallErrorsCount": 0,
+    "recallErrors": []
+   }
+  }
+ },
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/syncGroups/sg-dept/serverEndpoints/se-fs02-data",
+  "name": "se-fs02-data",
+  "type": "Microsoft.StorageSync/storageSyncServices/syncGroups/serverEndpoints",
+  "properties": {
+   "serverLocalPath": "C:\\Data",
+   "cloudTiering": "off",
+   "volumeFreeSpacePercent": 20,
+   "tierFilesOlderThanDays": 60,
+   "friendlyName": "FS02",
+   "serverName": "FS02.contoso.local",
+   "serverResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/registeredServers/fs02",
+   "provisioningState": "Succeeded",
+   "lastWorkflowId": "",
+   "lastOperationName": "",
+   "initialDownloadPolicy": "NamespaceThenModifiedFiles",
+   "localCacheMode": "UpdateLocallyCachedFiles",
+   "initialUploadPolicy": "Merge",
+   "syncStatus": {
+    "downloadHealth": "Healthy",
+    "uploadHealth": "Healthy",
+    "combinedHealth": "Healthy",
+    "syncActivity": "None",
+    "totalPersistentFilesNotSyncingCount": 0,
+    "lastUpdatedTimestamp": "2026-09-03T14:30:00Z",
+    "uploadStatus": {
+     "lastSyncResult": 0,
+     "lastSyncTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncSuccessTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncPerItemErrorCount": 0,
+     "persistentFilesNotSyncingCount": 0,
+     "transientFilesNotSyncingCount": 0,
+     "filesNotSyncingErrors": []
+    },
+    "downloadStatus": {
+     "lastSyncResult": 0,
+     "lastSyncTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncSuccessTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncPerItemErrorCount": 0,
+     "persistentFilesNotSyncingCount": 0,
+     "transientFilesNotSyncingCount": 0,
+     "filesNotSyncingErrors": []
+    }
+   },
+   "cloudTieringStatus": null,
+   "recallStatus": {
+    "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+    "totalRecallErrorsCount": 0,
+    "recallErrors": []
+   }
+  }
+ },
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/syncGroups/sg-dept/serverEndpoints/se-fs02-sub",
+  "name": "se-fs02-sub",
+  "type": "Microsoft.StorageSync/storageSyncServices/syncGroups/serverEndpoints",
+  "properties": {
+   "serverLocalPath": "C:\\Data\\Sub",
+   "cloudTiering": "off",
+   "volumeFreeSpacePercent": 20,
+   "tierFilesOlderThanDays": 60,
+   "friendlyName": "FS02",
+   "serverName": "FS02.contoso.local",
+   "serverResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/registeredServers/fs02",
+   "provisioningState": "Succeeded",
+   "lastWorkflowId": "",
+   "lastOperationName": "",
+   "initialDownloadPolicy": "NamespaceThenModifiedFiles",
+   "localCacheMode": "UpdateLocallyCachedFiles",
+   "initialUploadPolicy": "Merge",
+   "syncStatus": {
+    "downloadHealth": "Healthy",
+    "uploadHealth": "Healthy",
+    "combinedHealth": "Healthy",
+    "syncActivity": "None",
+    "totalPersistentFilesNotSyncingCount": 0,
+    "lastUpdatedTimestamp": "2026-09-03T14:30:00Z",
+    "uploadStatus": {
+     "lastSyncResult": 0,
+     "lastSyncTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncSuccessTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncPerItemErrorCount": 0,
+     "persistentFilesNotSyncingCount": 0,
+     "transientFilesNotSyncingCount": 0,
+     "filesNotSyncingErrors": []
+    },
+    "downloadStatus": {
+     "lastSyncResult": 0,
+     "lastSyncTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncSuccessTimestamp": "2026-09-03T14:30:00Z",
+     "lastSyncPerItemErrorCount": 0,
+     "persistentFilesNotSyncingCount": 0,
+     "transientFilesNotSyncingCount": 0,
+     "filesNotSyncingErrors": []
+    }
+   },
+   "cloudTieringStatus": null,
+   "recallStatus": {
+    "lastUpdatedTimestamp": "2026-09-03T14:00:00Z",
+    "totalRecallErrorsCount": 0,
+    "recallErrors": []
+   }
+  }
+ }
+]

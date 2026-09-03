@@ -1,0 +1,47 @@
+%% Who owns which part of the File Sync topology - Contoso, Microsoft and the delivery team - and where each hand-off happens
+%% Source: codex/README.md Contoso profile, codex/blueprint-azure-file-sync-private-path.md (the three legs and the one that cannot move to ExpressRoute), codex/blueprint-azure-files-backup-protection.md; Microsoft Learn "Plan an Azure File Sync deployment" identity section (Azure File Sync Administrator role), "Configure Azure File Sync network endpoints", "Azure File Sync agent update policy", read 2026-09-03
+flowchart TB
+  subgraph CO["Contoso owns - and is the only party that can change these"]
+    C1["The Windows file servers, their volumes, NTFS cluster size and the endpoint paths"]
+    C2["contoso.local AD DS, Kerberos AES-256, the NTFS ACLs that travel with the data"]
+    C3["Infoblox grid - authoritative contoso.local, the privatelink conditional forwarders, IPAM entries for the 1 plus 4 private endpoint IPs"]
+    C4["The ExpressRoute circuit and private peering, the hub and spoke VNets, NSGs and route tables"]
+    C5["Sync topology decisions - which share, which sync group, which servers, tiering policy per endpoint"]
+    C6["Endpoint hygiene - antivirus exclusions, no server-side backup on tiered volumes, Windows Search scope, DFS-R retirement"]
+    C7["Approving the private endpoint connections and the storage firewall posture - Deny plus AzureServices bypass"]
+    C8["The data itself, its retention schedule and the records classification behind it"]
+  end
+
+  subgraph MS["Microsoft owns - visible in the portal, not changeable by anyone"]
+    M1["The Storage Sync Service control plane and the four afs FQDNs behind the private endpoint"]
+    M2["The cloud change detection job that enumerates the share every 24 hours"]
+    M3["The Storage Sync Service to storage account leg on the trusted-services path - it never leaves Azure and CANNOT be moved onto ExpressRoute"]
+    M4["Azure Files durability - ZRS or GRS replication and service-side encryption at rest"]
+    M5["Azure Backup for Azure Files - snapshot orchestration and vault tier transfers, all Azure-internal, no ExpressRoute involved"]
+    M6["The agent binaries and the agent expiry and update policy"]
+  end
+
+  subgraph DELIVERY["Delivery team owns - for the length of the engagement"]
+    T1["The assessment - export, server diagnostics, the rule findings AFS, TIER, SRV, NET"]
+    T2["The target design and this codex - blueprints, playbooks, runbooks and diagrams"]
+    T3["The cut-over runbook and its per-step verification gates"]
+    T4["The oracle - proving the built state matches the design and handing over the evidence"]
+    T5["Knowledge transfer so Contoso staff can run the next department share without us"]
+    T6["NOT owned - production data, standing admin rights, or any change made outside a Contoso change record"]
+  end
+
+  C7 -->|"approve the pending connection before Microsoft can serve the private IPs"| M1
+  C3 -->|"resolution for the four afs names and the file name - if this breaks, sync stops even though nothing in Azure changed"| M1
+  C4 -->|"carries only the two legs the agent initiates, both HTTPS 443"| M1
+  M3 -.->|"this leg is why the AzureServices bypass must stay on - removing it breaks change enumeration for the whole sync group"| C7
+  M2 -->|"the reason a change made directly in the share can take 24 hours or more to reach a Contoso server"| C5
+  M6 -->|"an expired agent stops syncing, so Contoso owns the maintenance window"| C1
+  M5 -->|"restores land in the share, then reach the servers through the sync path Contoso owns"| C8
+
+  T1 --> T2 --> T3 --> T4 --> T5
+  T2 -->|"design decisions are recommended, Contoso decides and records them"| C5
+  T3 -->|"executed by Contoso staff or jointly, never silently"| C7
+  T4 -->|"handed over as evidence, not as a claim"| C8
+
+  BOUND["Boundary rule used throughout this codex - if a leg is initiated by a Contoso server it can be made private, and if it is initiated by a Microsoft service it cannot. Everything Microsoft initiates is contained by the trusted-services bypass and the resource instance rule for Microsoft.StorageSync"]
+  M3 --- BOUND

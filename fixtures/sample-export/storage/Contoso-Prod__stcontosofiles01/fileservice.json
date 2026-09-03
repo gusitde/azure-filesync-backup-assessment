@@ -1,0 +1,20 @@
+{
+ "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01/fileServices/default",
+ "name": "default",
+ "type": "Microsoft.Storage/storageAccounts/fileServices",
+ "sku": {
+  "name": "Standard_LRS",
+  "tier": "Standard"
+ },
+ "properties": {
+  "protocolSettings": {
+   "smb": {}
+  },
+  "cors": {
+   "corsRules": []
+  },
+  "shareDeleteRetentionPolicy": {
+   "enabled": false
+  }
+ }
+}

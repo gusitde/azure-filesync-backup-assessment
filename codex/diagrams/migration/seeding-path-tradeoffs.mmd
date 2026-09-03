@@ -1,0 +1,18 @@
+%% Seeding and catch-up options plotted against link dependence and cutover downtime - Contoso profile
+%% Source: Microsoft Learn "Migration overview for SMB Azure file shares" (tool table and fidelity column), "Migrate data into Azure File Sync with Azure Data Box" (offline bulk seed then zero-downtime catch-up), "Introduction to Azure Storage Mover" (Data Box plus Mover online catch-up, metadata-only uploads), "Migrate to Azure Files using RoboCopy" (downtime equals the last pass)
+quadrantChart
+  title Where each option sits - x is how much of the seed must cross the ExpressRoute link, y is how long the department is offline at cutover
+  x-axis "Whole seed crosses the wire" --> "Bulk seed travels offline"
+  y-axis "Downtime measured in hours" --> "Downtime close to zero"
+  quadrant-1 "Offline seed and a near-zero cutover - the default for large Contoso shares"
+  quadrant-2 "Wire seed and a near-zero cutover - the default for shares the link can carry"
+  quadrant-3 "Wire seed with a real outage - only for small or archival shares"
+  quadrant-4 "Offline seed but still a real outage - accept only when no catch-up tool fits the source"
+  Azure File Sync direct upload: [0.14, 0.92]
+  Data Box seed plus File Sync ServerAuthoritative: [0.90, 0.86]
+  Data Box seed plus Storage Mover catch-up: [0.88, 0.62]
+  Storage Mover agent based online: [0.22, 0.58]
+  Storage Mover agentless SMB with Key Vault credentials: [0.24, 0.52]
+  Storage Migration Service to a new server then File Sync: [0.34, 0.44]
+  RoboCopy repeated mirror passes: [0.12, 0.26]
+  Data Box seed with no catch-up tool: [0.86, 0.16]

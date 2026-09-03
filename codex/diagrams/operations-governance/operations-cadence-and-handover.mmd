@@ -1,0 +1,34 @@
+%% Operational cadence after go-live - the handover gate and the recurring work that keeps the design true
+%% Source: codex/playbook-enable-azure-backup-for-file-shares.md closure and steps, codex/blueprint-azure-files-backup-protection.md verification section, codex/playbook-enable-file-sync-private-endpoint-and-cutover.md 24 hour soak, codex/playbook-harden-existing-storage-account.md key policy, README.md of the kit for the export and assess commands, and Microsoft Learn on agent support windows, cross-region restore availability and Backup report data latency, read 2026-09-03
+timeline
+  title Contoso - Azure Files and File Sync operations cadence
+  section Day 0 handover gate - none of these may be waived
+    Coverage : Every share in the coverage table is Protected on a policy carrying a vault tier
+    Vault : Soft delete AlwaysON and immutability set to Locked only after the restore test passed
+    Proof : One documented item-level restore with job id and duration, plus one alert e-mail received from a forced failure
+    Alerting : The six File Sync rules, the storage account rules and the vault job-failure alerts all point at ag-organization-storage
+    Evidence : The baseline export and assessment are archived as the before picture
+    Ownership : Contoso on-call rota reads the action group mailbox and owns first response
+  section Week 1
+    Soak : 24 hours of healthy sync after the private-path cut-over on every registered server
+    Servers : Telemetry 9102 with HResult 0 and 9301 heartbeats confirmed server by server
+    Reports : Backup report data can take up to 24 hours to appear, so read it from day two
+    Noise : Retune any alert that fired without a real fault, never by widening the threshold silently
+  section Every month
+    Backup : Backup reports reviewed, no Failed jobs left unexplained
+    Capacity : Share used capacity against quota, escalate at 80 percent and page at 95 percent
+    Snapshots : Snapshot count per share kept under 150 of the 200 cap
+    Agents : Agent expiration metric checked, clustered servers scheduled by hand
+    Policy : Compliance state reviewed and every exemption checked for an expiry date
+  section Every quarter
+    Reassess : Re-export and re-assess with the kit in -PrivateTrafficRequired mode and diff against the last run
+    Restore : One item-level restore and one full-share restore to an alternate location with 20 percent free space
+    Drift : what-if against the committed Bicep plus the artifact registry diff
+    Keys : Storage account keys rotated on the 180 day policy in the safe order
+    Agents : Agent upgrades planned inside the 12 month support window, never at expiry
+  section Every year
+    Regional : Cross-region restore drill in the paired region, remembering it can take 48 hours to become available after enabling
+    Records : Vault retention re-checked against Contoso records-retention schedule
+    Commercial : Reservation renewal and access tier review against a full year of invoices
+    Design : Redundancy and topology decisions re-opened, because vault redundancy cannot change once an item is protected
+    Codex : Every entry re-verified and its last_verified date moved forward, or it is no longer a source of truth

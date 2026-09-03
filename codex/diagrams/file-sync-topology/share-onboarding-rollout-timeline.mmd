@@ -1,0 +1,47 @@
+%% Phased rollout of one Contoso department share into a sync group, with the gate that must pass before each next phase
+%% Source: Microsoft Learn "Deploy Azure File Sync" (order of resources, agent registration, initial upload before adding servers), "Create an Azure File Sync server endpoint" (initial sync and initial download policies, provisioning steps, automatic pre-endpoint share snapshot), "Choose Azure File Sync cloud tiering policies" (enable tiering after initial upload), read 2026-09-03; codex/playbook-enable-file-sync-private-endpoint-and-cutover.md; codex/blueprint-azure-files-backup-protection.md
+timeline
+  title Onboarding the dept share - one sync group, two Contoso sites, gates in bold order
+  section Phase 0 - assess and design
+    Inventory the source
+      : Export-AzFileSyncEnvironment and Get-AfsServerDiagnostics on every candidate server
+      : Count files and directories, measure the working set, read the NTFS cluster size with fsutil fsinfo ntfsinfo
+      : GATE - no server endpoint on the system volume, no nested paths, no DFS-R replicated folder in scope
+  section Phase 1 - Azure landing
+    Provision storage and sync
+      : StorageV2 account, ZRS or GRS, large file shares on, share soft delete 14 days
+      : Storage Sync Service in the SAME region as the storage account
+      : Private endpoint file and private endpoint afs with their DNS zone groups, Infoblox forwarders
+      : GATE - Resolve-DnsName returns 10.x for the file name and for all four afs names from a Contoso server
+  section Phase 2 - register the servers
+    Agent and registration
+      : Install agent v20 or later, Windows Server 2016 or later, register to the Storage Sync Service
+      : Arc-enable the servers and run Set-AzStorageSyncServiceIdentity so sync stops using the account key
+      : GATE - Debug-StorageSyncServer -TestNetworkConnectivity passes and 9301 heartbeats arrive every 30 seconds
+  section Phase 3 - first endpoint and initial upload
+    Seed the cloud
+      : Create the sync group, then the cloud endpoint on the dept share. Azure File Sync takes an automatic share snapshot first, initiator AzureFileSync
+      : First server endpoint with initial upload Merge, or ServerAuthoritative only when the share was seeded by Data Box
+      : Leave cloud tiering OFF for now unless the volume is too small, in which case use robocopy with LFSM
+      : GATE - 9102 SyncDirection Upload with HResult 0 and PerItemErrorCount 0, and the portal shows the initial upload complete
+  section Phase 4 - enable cloud tiering
+    Turn on the cache behaviour
+      : Volume free space 20 percent, date policy disabled, per the product guidance
+      : Enable-StorageSyncSelfServiceRestore on the endpoint volume so users can use Previous Versions
+      : Watch for one week - cache hit rate, cloud tiering recall size, low disk space mode
+      : GATE - cache hit ratio at or above 0.8 and no low disk space mode event 19000
+  section Phase 5 - second site
+    Add the branch endpoint
+      : Second server endpoint in the same sync group, on a DIFFERENT registered server, initial download NamespaceOnly
+      : Decide proactive recall per site - DownloadNewAndModifiedFiles only where a warm cache is worth the egress
+      : GATE - both endpoints Healthy for 24 hours and a test file written at one site opens at the other
+  section Phase 6 - front the namespace and retire the old path
+    Cut users over
+      : Point the DFS Namespace folder target at the new servers, keep the old target offline but present for rollback
+      : Retire the DFS-R replication group for this data once the sync group is authoritative
+      : GATE - user acceptance on the namespace path, no persistent per-item errors
+  section Phase 7 - protect and lock down
+    Backup and private path
+      : Protect the share from the regional Recovery Services vault - snapshots plus vault tier, GRS with cross region restore
+      : Storage firewall to Deny with the AzureServices bypass, then Set-AzStorageSyncService -IncomingTrafficPolicy AllowVirtualNetworksOnly
+      : GATE - a restore test succeeds, sync stays healthy for 24 hours after the lock-down, assessor reports no NET-05 to NET-08

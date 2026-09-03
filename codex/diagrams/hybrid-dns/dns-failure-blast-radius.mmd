@@ -1,0 +1,65 @@
+%% Blast radius of a DNS fault - what each fault takes down, what it silently does NOT touch, and the boundary that contains it
+%% Source: codex/runbook-private-endpoint-name-resolution-and-reachability.md classes 1 to 7, codex/runbook-file-sync-broken-after-network-lockdown.md, docs/RULES.md NET-02, NET-04, NET-09 and NET-11; Microsoft Learn "Configure DNS forwarding for Azure Files" cross-tenant warning and "Azure Private Endpoint DNS integration" duplicate-zone caution
+flowchart TB
+  subgraph FAULT["The fault - all seven look the same to a user, and four of them look healthy to a monitor"]
+    F1["No Infoblox forward zone for one privatelink name"]
+    F2["Zone linked but no A record - zone group never attached"]
+    F3["Two zones of the same name linked to the same VNet"]
+    F4["Record stale after the endpoint was recreated"]
+    F5["Spoke VNet pointed at custom DNS that does not forward to 168.63.129.16"]
+    F6["Ruleset not linked to the spoke, or the contoso.local rule Disabled"]
+    F7["Forward zone for the whole core.windows.net suffix"]
+  end
+
+  subgraph HIT["What it takes with it"]
+    H1["Direct SMB mounts on 445 - network path not found, or a 403 once the firewall is at Deny"]
+    H2["Azure File Sync - server endpoints move to Error, Telemetry 9102 stops returning HResult 0, tiered files fail to recall"]
+    H3["Azure Migrate appliance - AgentNotConnected, ForbiddenToAccessKeyVault, 504 on saving configuration"]
+    H4["Azure VMs that must join or authenticate against contoso.local - domain join and Kerberos both fail"]
+    H5["Any storage account in ANOTHER tenant that uses private endpoints - answered with a CNAME that exists in no zone linked here, so NXDOMAIN"]
+  end
+
+  subgraph SAFE["What the fault does NOT touch - state this in the incident so the bridge stops chasing it"]
+    S1["Azure Backup for Azure Files. Snapshots and vault transfers are Azure-internal on the trusted-services path. No Contoso DNS, no ExpressRoute, no private endpoint on the vault - assessor rule NET-09"]
+    S2["The Storage Sync Service calling the storage account for change enumeration. Microsoft initiates it inside Azure"]
+    S3["Portal, ARM, Entra ID sign-in, Microsoft PKI and agent updates. These stay public by design and keep working"]
+  end
+
+  F1 --> H1
+  F1 --> H2
+  F1 --> H3
+  F2 --> H1
+  F2 --> H2
+  F3 --> H1
+  F3 --> H3
+  F4 --> H1
+  F4 --> H2
+  F5 --> H1
+  F5 --> H2
+  F6 --> H4
+  F7 --> H5
+
+  MULT{"Is the storage firewall already at defaultAction Deny, or is incomingTrafficPolicy already AllowVirtualNetworksOnly?"}
+  H1 --> MULT
+  H2 --> MULT
+  MULT -->|"no - the public endpoint is still open"| LATENT["Latent. Everything works over the internet path and no alert fires. The fault is only visible in Resolve-DnsName output. This is the state Contoso is in today and it is why the gate is a DNS test, not a service test."]
+  MULT -->|"yes"| TOTAL["Total and simultaneous. Every registered server and every mount fails within one TTL of each other, because they all lost the same answer. Recovery is minutes only because the two rollback levers are one command each."]
+
+  subgraph CONTAIN["What contains it"]
+    C1["One zone per name for the whole estate, linked to hub and spokes. Removes F3 by construction"]
+    C2["A DNS zone group on every endpoint. Removes F2 and F4 by construction - assessor rule NET-04"]
+    C3["Forward-only zones for the seven privatelink names, never the public suffix. Removes F7"]
+    C4["Static inbound endpoint address recorded in IPAM and in the landing-zone design. Removes the silent breakage when a resolver is reprovisioned"]
+    C5["The gate - Resolve-DnsName returns 10.x on EVERY Contoso server and the Migrate appliance, before any firewall or traffic-policy change"]
+    C6["Rollback levers kept one command away - Set-AzStorageSyncService -IncomingTrafficPolicy AllowAllTraffic and az storage account update --default-action Allow"]
+  end
+
+  TOTAL --> C6
+  LATENT --> C5
+  H5 --> C3
+  F2 --> C2
+  F3 --> C1
+  F4 --> C2
+  F1 --> C5
+  F5 --> C5
+  F6 --> C5

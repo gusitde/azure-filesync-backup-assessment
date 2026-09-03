@@ -1,0 +1,36 @@
+%% Enabling AD DS identity on one Contoso storage account - the phase order and the gate that opens the next phase - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md and codex/playbook-harden-existing-storage-account.md, docs/RULES.md SEC-04 SEC-13 BKP-18 (Microsoft Learn: Enable AD DS authentication for Azure Files; Assign share-level permissions; Configure directory and file-level permissions; Update the password of your storage account identity in AD DS)
+timeline
+  title Identity cut-over on stmtyfiles01 - no phase starts until the previous gate passes
+  section Phase 0 - prerequisites before anything is joined
+    Week 0 : Confirm the AD groups that own the data are synced to Entra ID with Entra Connect Sync or Cloud Sync - password hash synchronization is not required
+           : Confirm the tenant holding those groups is the same tenant that manages the subscription owning the storage account
+           : Create OU=AzureFiles under OU=Servers in contoso.local with password expiry disabled on that OU
+           : Stage AzFilesHybrid 0.3.2 and Az.Storage 8.1.0 or later on a domain-joined admin station
+           : GATE 0 - Get-ADDomain returns the DNSRoot ObjectGUID and domain SID that the join will write into activeDirectoryProperties
+  section Phase 1 - join the storage account to contoso.local
+    Week 1 : Join-AzStorageAccount creates the computer object with a SamAccountName of 15 characters or fewer and no trailing dollar sign
+           : Confirm KerberosEncryptionType is AES256 - Azure Files does not support AES-128 and RC4 objects fail after the AES-256 default change
+           : Debug-AzStorageAccountAuth passes and directoryServiceOptions reads AD
+           : GATE 1 - the account reports AD and the object exists in the target OU with AES256
+  section Phase 2 - authorize at share level
+    Week 2 : Assign Storage File Data SMB Share Contributor to the synced GROUP at the fileshares scope of one pilot share
+           : Never assign to a User principal - SEC-13 fails on principalType User
+           : For computer accounts sMSA and gMSA use a default share-level permission instead - they have no Entra object to assign to
+           : GATE 2 - after up to 30 minutes of propagation a pilot user mounts the share with no prompt and klist shows a cifs ticket
+  section Phase 3 - directory and file ACLs
+    Week 3 : Mount once with Storage File Data SMB Admin rather than with the account key and set the DACLs with icacls
+           : Optionally migrate the root ACL with Move-OnPremSharePermissionsToAzureFileShare - it converts the ROOT directory only
+           : GATE 3 - effective access for a pilot user in each department equals the most restrictive of the share role and the DACL
+  section Phase 4 - move the clients off the account key
+    Week 4 : Repoint mapped drives from key-based mounts to the Kerberos mount that resolves to the private endpoint address
+           : Watch the Transactions metric on the file service split by the Authentication dimension
+           : GATE 4 - AccountKey transactions read zero or null for a full day
+  section Phase 5 - close the door
+    Week 5 : Set authenticationMethods to Kerberos and kerberosTicketEncryption to AES-256 on the file service
+           : Leave allowSharedKeyAccess true while Azure Backup protects the shares - BKP-18 is the incident that follows disabling it
+           : GATE 5 - a fresh mount still succeeds after klist purge and every File Sync server keeps syncing
+  section Ongoing operations
+    Each rotation window : Update-AzStorageAccountADObjectPassword -RotateToKerbKey kerb2 then wait several hours and rotate back to kerb1 so both Kerberos keys are regenerated
+           : Test-AzStorageAccountADObjectPasswordIsKerbKey confirms the AD password still matches the Kerberos key
+           : Quarterly - review who holds Storage File Data Privileged Contributor and Storage File Data Privileged Reader, both override every NTFS ACL

@@ -1,0 +1,39 @@
+%% Decision tree - private endpoint, service endpoint, IP rule or trusted-services bypass, one answer per traffic source
+%% Source: Microsoft Learn - Azure Storage firewall rules and network access (virtual network rules need a Microsoft.Storage service endpoint, IP rules need public IPs, on-premises over ExpressRoute needs Microsoft peering NAT IPs); Configure Azure File Sync network endpoints (File Sync does not support service endpoints); Networking considerations for Azure Files; codex/blueprint-azure-files-secure-storage-account.md step 2
+flowchart TB
+  START{"Which source has to reach the resource?"}
+
+  START -->|"a Contoso server or workstation on contoso.local"| Q1{"Reaching the storage account or the Storage Sync Service?"}
+  START -->|"an Azure VM in a peered spoke"| Q2{"Does the VM already resolve through the linked privatelink zone?"}
+  START -->|"Microsoft initiates the call - Storage Sync Service change enumeration, Azure Backup snapshot"| SVC
+  START -->|"an administrator browsing file share data in the portal"| ADM
+
+  Q1 -->|"storage account, SMB 445 or FileREST 443"| Q3{"Is the path ExpressRoute private peering?"}
+  Q1 -->|"Storage Sync Service, sync control on 443"| SSSONLY
+
+  Q3 -->|"yes - Contoso design"| PE
+  Q3 -->|"no, Microsoft peering with provider NAT"| IPRULE
+
+  SEFAIL["Service endpoint does NOT help here. A service endpoint is a virtual network capability - traffic still lands on the storage public IP and the fabric checks it came from an allowed subnet. A Contoso server is not in a VNet, so no virtual network rule can ever match it"]
+  Q3 -.-> SEFAIL
+
+  PE["Private endpoint, sub-resource file. One NIC IP in snet-pe-region-01, A record in privatelink.file.core.windows.net, Infoblox forwarder to the resolver inbound endpoint"]
+  IPRULE["IP network rule with the Microsoft peering NAT public IPs supplied by the carrier. Max 400 IP rules per account. Traffic is no longer private - Contoso rejected this"]
+  SSSONLY["Private endpoint, sub-resource Afs, four NIC IPs. Azure File Sync has NO service endpoint option - the only two states of the Storage Sync Service public endpoint are enabled and disabled"]
+
+  Q2 -->|"yes"| REUSE["Reuse the same private endpoint. One DNS answer for on-premises and for Azure keeps the estate on one zone"]
+  Q2 -->|"no, and the VM must stay off the privatelink zone"| SE["Microsoft.Storage service endpoint on the VM subnet plus a virtual network rule. Microsoft.Storage.Global if the account is in another region. Only one of the two endpoint types per subnet"]
+
+  SVC["Neither endpoint type applies. The Storage Sync Service and Azure Backup are outside any network you control"]
+  SVC --> BYPASS["networkAcls.bypass = AzureServices plus a resource instance rule for Microsoft.StorageSync/storageSyncServices. Azure Backup additionally needs allowSharedKeyAccess true - it uses key-based access for Azure Files backup and restore"]
+  BYPASS --> NEVER["Never publicNetworkAccess Disabled on a File Sync account - it blocks the trusted-services path as well and takes sync down with it"]
+
+  ADM["IP network rule for the administrator egress IP. The firewall evaluates the browser-to-data-plane request, not the portal.azure.com request, so a missing rule gives 403 on the file browser while the portal itself loads"]
+
+  PE --> LOCK["Only after every source above is answered - defaultAction Deny, bypass AzureServices, publicNetworkAccess Enabled"]
+  SSSONLY --> LOCK2["Only after all four afs names resolve to 10.x on every server - Set-AzStorageSyncService -IncomingTrafficPolicy AllowVirtualNetworksOnly"]
+  REUSE --> LOCK
+  SE --> LOCK
+  IPRULE --> LOCK
+  ADM --> LOCK
+  NEVER --> LOCK

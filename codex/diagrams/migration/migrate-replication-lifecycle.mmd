@@ -1,0 +1,70 @@
+%% Agentless VMware replication lifecycle in Azure Migrate - the states a server passes through and where it falls back
+%% Source: Microsoft Learn "Migrate VMware VMs agentless" (execution stage and status, test migration, complete migration) and "Support for VMware vSphere migration in Azure Migrate" (limits, ports)
+stateDiagram-v2
+  direction TB
+  [*] --> Discovered
+
+  state "Discovered by the appliance" as Discovered
+  state "Assessed - readiness, sizing, cost" as Assessed
+  Discovered --> Assessed : discovery and assessment traffic goes to the project private endpoint
+  Assessed --> EnableReplication : Execute then Migration then Start execution
+
+  state "Enable replication" as EnableReplication
+  note right of EnableReplication
+    Target settings pick the cache storage account.
+    After the first replication of a VM the target
+    region and the storage account can no longer be changed.
+    Portal selects at most 10 VMs per batch.
+  end note
+
+  state Preparation {
+    [*] --> InitialReplication
+    state "Initial replication - VMware snapshot, seed disks written to Azure" as InitialReplication
+    InitialReplication --> [*] : initial replication complete
+  }
+  EnableReplication --> Preparation
+
+  state Testing {
+    [*] --> DeltaReplication
+    state "Delta replication - changed blocks only, VM is ready to migrate" as DeltaReplication
+    state "Test migration - Azure VM built on a non-production VNet" as TestMigration
+    DeltaReplication --> TestMigration : Start test migration
+    TestMigration --> DeltaReplication : Clean up test migration
+    note right of TestMigration
+      The source VM stays running and keeps replicating.
+      Run this at least once for every machine.
+    end note
+  }
+  Preparation --> Testing : initial replication finished
+
+  state Completion {
+    [*] --> Cutover
+    state "Migrate - shut down the source VM, on-demand final replication, no data loss" as Cutover
+    state "Migrated - Azure VM running, replication state still held" as Migrated
+    Cutover --> Migrated
+    Migrated --> [*] : Complete migration stops replication and cleans replication state
+  }
+  Testing --> Completion : test validated or testing skipped
+  Completion --> Decommissioned
+
+  state "Decommissioned - source removed from vCenter inventory and local backups" as Decommissioned
+  Decommissioned --> [*]
+
+  Preparation --> CycleReset : Azure connectivity or appliance services down for more than 90 minutes
+  Testing --> CycleReset : Azure connectivity or appliance services down for more than 90 minutes
+  state "Replication cycle resets from 0 percent" as CycleReset
+  CycleReset --> Preparation : appliance recovers and initial replication restarts
+
+  Preparation --> Stopped : Stop replication
+  Testing --> Stopped : Stop replication
+  state "Stopped - replication state discarded, seed disks removed" as Stopped
+  Stopped --> EnableReplication : re-enable, which repeats the full initial replication
+
+  note left of Preparation
+    Execution stage is Preparation, Testing or Completion.
+    Execution status is In progress, In error, Action pending or Completed.
+    Up to 300 VMs replicate at once per vCenter with one appliance,
+    up to 500 with a scale-out appliance.
+    Appliance outbound 443 to Azure, inbound 443 on vCenter,
+    inbound TCP 902 on each ESXi host.
+  end note

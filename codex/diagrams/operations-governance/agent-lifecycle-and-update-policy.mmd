@@ -1,0 +1,61 @@
+%% Azure File Sync agent lifecycle on a Contoso registered server - the states a version passes through and the update policy that decides who moves it
+%% Source: Microsoft Learn "Plan an Azure File Sync deployment", sections Azure File Sync agent update policy, Automatic management of the agent lifecycle, Agent lifecycle and change management guarantees, read 2026-09-03; assessor rules AFS-05, AFS-06, AFS-12, AFS-15 in docs/RULES.md
+stateDiagram-v2
+  direction TB
+
+  state "Agent version on one registered server" as LIFE {
+    direction TB
+    state "Current - newest major version, for example 22.x" as CUR
+    state "Supported - an older major still inside its window" as SUP
+    state "Expiring - warning raised at least 3 months before expiry" as EXPG
+    state "Self-update window - inside 21 days of the posted expiry date" as WIN
+    state "Expired - connecting with this version is blocked and sync stops" as EXP
+    state "Unregistered - server retired from the Storage Sync Service" as GONE
+
+    [*] --> CUR
+    CUR --> SUP : a newer major ships, at least 3 months of overlap
+    SUP --> EXPG : metric StorageSyncAgentVersionExpirationDays rises above 0
+    EXPG --> WIN : 21 days before the posted expiry date
+    WIN --> CUR : self-update succeeds inside the maintenance window
+    WIN --> EXP : every weekly attempt fails, for example no route to Microsoft Update
+    EXPG --> CUR : operator updates with AfsUpdater.exe or the msp patch
+    SUP --> CUR : operator takes the update early
+    EXP --> CUR : reinstall a supported version - registration and server endpoints survive
+    EXP --> GONE : server decommissioned instead of updated
+  }
+
+  note right of LIFE
+    The guarantees Microsoft publishes, which is what makes this plannable.
+    A major version is supported at least 12 months from its release.
+    Consecutive major versions overlap by at least 3 months.
+    Expiry warnings reach registered servers at least 3 months out.
+    A minor version dies with its major - 18.2.0.0 expires when 18.0.0.0 does.
+    Installing an expired agent warns but succeeds. Connecting with one is blocked.
+    Downgrade is never supported - roll forward, never back.
+  end note
+
+  state "Update policy set per server" as POLICY {
+    direction TB
+    state "UpdateBeforeExpiration - the default guardrail" as P1
+    state "InstallLatest with a chosen day and hour" as P2
+    state "Manual only - clustered file servers" as P3
+
+    [*] --> P1
+    P1 --> P2 : Set-StorageSyncAgentAutoUpdatePolicy -PolicyMode InstallLatest -Day d -Hour h
+    P2 --> P1 : Set-StorageSyncAgentAutoUpdatePolicy -PolicyMode UpdateBeforeExpiration
+    P1 --> P3 : the server is a failover cluster node
+    P2 --> P3 : flighting excludes clustered servers
+  }
+
+  note right of POLICY
+    P1 attempts a self-update once a week, only inside the last 21 days,
+    and only in the maintenance window. It does not replace Microsoft Update patching.
+    P2 takes each flighted version as it becomes generally available.
+    P3 is Contoso reality on the clustered file servers - assessor AFS-15 lists
+    them so the per-node update is scheduled by hand.
+    Two version floors Contoso design depends on.
+    Managed identity for File Sync needs agent v20 or later - assessor AFS-12.
+    The Software Assurance plus Azure Arc per-server discount needs v22 or later.
+    The alert that drives all of this is StorageSyncAgentVersionExpirationDays
+    greater than 0, evaluated hourly over a 12 hour lookback - 90 days of warning.
+  end note

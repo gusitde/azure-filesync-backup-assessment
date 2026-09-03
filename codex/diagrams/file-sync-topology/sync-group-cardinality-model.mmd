@@ -1,0 +1,59 @@
+%% Azure File Sync resource model and the cardinality rules that constrain every topology - Contoso profile
+%% Source: Microsoft Learn Azure File Sync scale targets and Plan an Azure File Sync deployment (read 2026-09-03); codex/blueprint-azure-file-sync-private-path.md
+erDiagram
+    SUBSCRIPTION ||--o{ STORAGE_SYNC_SERVICE : "100 per subscription - hard"
+    STORAGE_SYNC_SERVICE ||--o{ SYNC_GROUP : "200 per service - hard"
+    STORAGE_SYNC_SERVICE ||--o{ REGISTERED_SERVER : "100 per service - hard - a server registers to exactly ONE service"
+    STORAGE_SYNC_SERVICE ||--o{ PRIVATE_ENDPOINT_AFS : "100 per service - hard - sub-resource afs - 4 IPs each"
+    SYNC_GROUP ||--|| CLOUD_ENDPOINT : "exactly ONE cloud endpoint - hard"
+    SYNC_GROUP ||--o{ SERVER_ENDPOINT : "100 server endpoints - hard - at most one per registered server"
+    REGISTERED_SERVER ||--o{ SERVER_ENDPOINT : "30 per server - hard - namespaces must not overlap"
+    CLOUD_ENDPOINT ||--|| FILE_SHARE : "a share used by one sync group can never be reused by another"
+    STORAGE_ACCOUNT ||--o{ FILE_SHARE : "shares contend for the account IOPS and throughput budget"
+    STORAGE_ACCOUNT ||--o{ PRIVATE_ENDPOINT_FILE : "sub-resource file - 1 IP - the data and recall leg"
+    SERVER_ENDPOINT ||--|| LOCAL_VOLUME : "never the system volume - cloud tiering is unsupported there"
+    RECOVERY_SERVICES_VAULT ||--o{ FILE_SHARE : "protects the share not the server - one vault per region"
+
+    STORAGE_SYNC_SERVICE {
+        string region "must match its storage accounts - rule AFS-16"
+        string incomingTrafficPolicy "AllowVirtualNetworksOnly after cut-over"
+        bool useIdentity "true once agent v20 plus and Arc identities exist"
+        string isolation "one service per business unit that needs hard data isolation"
+        string lock "CanNotDelete - deleting it deletes every sync group and registration"
+    }
+    SYNC_GROUP {
+        string name "one per Azure file share - home dept archive"
+        int max_objects "100 million files and folders - soft - stay under 20 to 30 million"
+    }
+    CLOUD_ENDPOINT {
+        string name "a GUID not the portal friendly name"
+        string changeEnumeration "scheduled job every 24 hours"
+        int manual_detection_cap "10000 items when scoped with DirectoryPath or Path"
+    }
+    SERVER_ENDPOINT {
+        bool cloudTiering "on for Contoso branch caches"
+        int volumeFreeSpacePercent "20 to start - the free-space policy always wins"
+        int tierFilesOlderThanDays "date policy - optional - leave disabled first"
+        string initialDownloadPolicy "NamespaceOnly is the default when tiering is on"
+        string initialUploadPolicy "Merge unless the share was seeded by Data Box"
+    }
+    REGISTERED_SERVER {
+        string os "Windows Server 2016 or later only"
+        string agentVersion "v20 plus for managed identity"
+        string activeAuthType "ManagedIdentity once Arc-enabled"
+        bool clustered "clusters are excluded from automatic agent updates"
+    }
+    STORAGE_ACCOUNT {
+        string kind "StorageV2 with large file shares enabled"
+        string sku "ZRS or GRS - never RA-GRS - rule DATA-07"
+        string networkAcls "Deny plus AzureServices bypass - never publicNetworkAccess Disabled"
+        int shareSoftDeleteDays "14 minimum"
+    }
+    FILE_SHARE {
+        int max_snapshots "200 per share shared with Azure Backup"
+        int max_file_size "100 GiB per file - soft"
+    }
+    LOCAL_VOLUME {
+        int bytesPerCluster "4096 - each tiered file consumes one cluster"
+        int min_tierable_file "2x cluster size with an 8 KiB floor"
+    }

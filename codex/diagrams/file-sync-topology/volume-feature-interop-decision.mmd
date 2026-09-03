@@ -1,0 +1,35 @@
+%% Everything else that can live on a server endpoint volume - which features coexist with cloud tiering, which change its timing, and which must be switched off
+%% Source: Microsoft Learn "Plan an Azure File Sync deployment" sections Data deduplication, Distributed File System, Windows Search, Other HSM solutions, NTFS compression, Failover clustering, Backup, Encryption; "Choose Azure File Sync cloud tiering policies" (FSRM quota limitation), read 2026-09-03; docs/RULES.md SRV-02, SRV-04, SRV-11
+flowchart TD
+  Q0{"Which other feature is enabled on the volume that holds the server endpoint?"}
+
+  Q0 -->|"Data Deduplication"| D1{"Windows Server 2016 or 2019?"}
+  D1 -->|"yes"| D2["Install KB4520062 from October 2019 or a later monthly rollup first. Windows Server 2022 and 2025 need nothing extra"]
+  D1 -->|"no, 2022 or 2025"| D3
+  D2 --> D3{"Was Data Deduplication installed before the Azure File Sync agent?"}
+  D3 -->|"yes"| D4["Reboot once, otherwise dedup and cloud tiering are not both supported on that volume"]
+  D3 -->|"no"| D5
+  D4 --> D5["Supported combination. Tiering treats an optimized file like any other file, and Azure File Sync starts dedup garbage collection at the end of each tiering session so the freed chunks come back"]
+  D5 --> D6["Timing changes you must document - MinimumFileAgeDays is ADDED to the date policy, so MinimumFileAgeDays 7 with a 30 day date policy tiers at 37 days. The first optimization pass also holds files open, so the date policy skips them while it runs; the free space policy keeps working from the heat map"]
+  D6 --> D7["Savings are local only. The Azure file share always stores the full rehydrated data set, so cloud capacity is unchanged and rule SRV-11 stays informational"]
+
+  Q0 -->|"DFS Replication"| R1["Cloud tiering must be OFF on any volume with a DFS-R replicated folder. Never place a server endpoint on a read-only replication folder - tiering fails with 0x80070005 ERROR_ACCESS_DENIED. Only ONE server endpoint may overlap a DFS-R location"]
+  R1 --> R2["Target state - retire DFS-R and let the sync group do the replication"]
+
+  Q0 -->|"FSRM quota management"| F1{"Is the hard quota applied at the volume root?"}
+  F1 -->|"yes"| F2["Change it. Real free space and quota-limited free space disagree, so the agent can tier endlessly chasing a target it can never reach"]
+  F1 -->|"no, folder level"| F3["Supported. FSRM processes are already in the default heat-tracking exclusion list, so quota scans do not rewrite last access times"]
+
+  Q0 -->|"Windows Search"| S1["Tiered files are skipped by the indexer, so the index is incomplete for tiered content. A Windows client with Always search file names and contents enabled still forces recalls - that setting is off by default. Rule SRV-04"]
+
+  Q0 -->|"NTFS compression"| C1["Do not combine with cloud tiering - significant performance impact. Recall first, then uncompress; on Windows Server 2019 and later the compact command skips tiered files entirely"]
+
+  Q0 -->|"Another HSM or archiving product"| H1["Not allowed. A second hierarchical storage manager conflicts with cloud tiering and can cause data inconsistency. Azure File Sync is the only HSM on that volume"]
+
+  Q0 -->|"Server-side backup agent"| B1["Tiered files are either skipped because of FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS or recalled in bulk. Bare-metal, VM, system and tiered file-level restores are unsupported with cloud tiering. Back up the Azure file share instead, or run the backup on a sync group member with tiering off"]
+
+  Q0 -->|"BitLocker or file-format encryption"| E1["BitLocker is transparent to Azure File Sync. Azure Information Protection style encryption inside the file stays encrypted in the share. NTFS Encrypting File System and filter-level encryption products are NOT interoperable"]
+
+  Q0 -->|"Failover clustering"| K1["Supported only for File Server for general use with clustered disks - never Scale-Out File Server, Cluster Shared Volumes or local disks. Install the agent on every node, and put GhostingExclusionList and HeatTrackingProcessNamesExclusionList under the HKLM Cluster StorageSync path. Clustered servers are excluded from automatic agent updates, rule AFS-15"]
+
+  Q0 -->|"Sysprep or a cloned image"| Y1["Unsupported after the agent is installed. Deploy the image first, finish mini-setup, then install and register the agent"]

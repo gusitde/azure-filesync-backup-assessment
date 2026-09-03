@@ -1,0 +1,81 @@
+%% The Azure objects that make up Contoso backup, how they reference each other, and the hard cardinality limits between them
+%% Source: codex/blueprint-azure-files-backup-protection.md declared artifact registry; Microsoft Learn "Support matrix for Azure Files backup" (protection, backup, restore and retention limits), "Multiuser authorization using Resource Guard", "Immutable vault", "Secure by default with soft delete", "Azure file share soft delete" (read 2026-09-03)
+erDiagram
+  RECOVERY_SERVICES_VAULT ||--o{ PROTECTION_CONTAINER : "200 storage accounts per vault, 50 registered per day"
+  RECOVERY_SERVICES_VAULT ||--o{ BACKUP_POLICY : "Contoso runs two - active shares and archive shares"
+  RECOVERY_SERVICES_VAULT ||--o{ PROTECTED_ITEM : "2000 shares per vault, 200 configured per day"
+  RECOVERY_SERVICES_VAULT }o--o| RESOURCE_GUARD : "MUA association - Guard lives in a second subscription"
+  RECOVERY_SERVICES_VAULT ||--o{ DIAGNOSTIC_SETTING : "AzureBackupReport, CoreAzureBackup, AddonAzureBackupJobs"
+  RECOVERY_SERVICES_VAULT ||--o{ ALERT_RULE : "alertsForAllJobFailures Enabled"
+  RECOVERY_SERVICES_VAULT ||--o| PAIRED_REGION_REPLICA : "GRS plus CRR - East US is the pair of West US"
+
+  PROTECTION_CONTAINER ||--|| STORAGE_ACCOUNT : "registers - the account must be in the vault region"
+  STORAGE_ACCOUNT ||--o{ FILE_SHARE : "SMB only - NFS shares cannot be protected"
+  STORAGE_ACCOUNT ||--|| FILE_SERVICE_PROPERTIES : "share soft delete is an account-level setting"
+  FILE_SHARE ||--o{ SHARE_SNAPSHOT : "read-only point in time, created through the Files API"
+  FILE_SHARE ||--o| CLOUD_ENDPOINT : "at most one sync group cloud endpoint per share"
+  CLOUD_ENDPOINT }o--|| STORAGE_SYNC_SERVICE : "receives the restored-path list for change detection"
+
+  PROTECTED_ITEM ||--|| FILE_SHARE : "one backup item per share"
+  PROTECTED_ITEM }o--|| BACKUP_POLICY : "6 scheduled backups per day is the snapshot-tier ceiling"
+  PROTECTED_ITEM ||--o{ RECOVERY_POINT_SNAPSHOT : "200 recovery points per share is a hard cap"
+  PROTECTED_ITEM ||--o{ RECOVERY_POINT_VAULT : "only the LAST scheduled snapshot of the day is transferred"
+  RECOVERY_POINT_SNAPSHOT ||--|| SHARE_SNAPSHOT : "holds the snapshot URL in the metadata store, not the data"
+  RECOVERY_POINT_VAULT ||--o| PAIRED_REGION_REPLICA : "snapshot points are NOT replicated, only vaulted ones"
+
+  RECOVERY_SERVICES_VAULT {
+    string name "rsv-contoso-westus - must sit in the storage account region"
+    string storageModelType "GeoRedundant - immutable once an item is protected"
+    bool crossRegionRestoreFlag "true - set BEFORE the first protected item"
+    string softDeleteState "AlwaysON - disabling is refused on every API version in GA"
+    int softDeleteRetentionPeriodInDays "14 to 180 - first 14 days are free"
+    string immutabilityState "Disabled, Enabled, or Enabled and locked"
+    string publicNetworkAccess "Enabled - a vault private endpoint does NOT apply to Azure Files"
+  }
+
+  RESOURCE_GUARD {
+    string subscription "second subscription or tenant - maximum isolation"
+    string backupAdminRole "Reader only - never Contributor or Backup MUA Admin"
+    string operatorRole "Backup MUA Operator granted just in time through PIM"
+    string mandatoryOps "Disable soft delete or security features, Remove MUA protection"
+    string optionalOps "Delete protection, Modify protection, Modify policy, Disable immutability, Stop backup and retain data, Restore"
+  }
+
+  BACKUP_POLICY {
+    string name "AFS-Active-4h-30d-Vault-90d and AFS-Archive-1d-30d-Vault-1y"
+    string tier "snapshot plus vault-standard"
+    string snapshotRetention "hourly ceiling is floor of 200 over daily snapshot count, minus 1"
+    string vaultRetention "daily to 9999 days, monthly to 1188 months, yearly to 99 years"
+    string timeZone "Pacific Standard Time"
+  }
+
+  STORAGE_ACCOUNT {
+    string kind "StorageV2 or FileStorage - GPv1 works for the snapshot tier only"
+    bool allowSharedKeyAccess "true - Azure Backup uses the key-based data plane"
+    string networkRuleSet_bypass "AzureServices - removing it breaks backup and restore"
+    string sku "ZRS or GRS - never RA-GRS"
+  }
+
+  FILE_SERVICE_PROPERTIES {
+    bool shareDeleteRetentionPolicy_enabled "Azure Backup turns this on when protection is enabled"
+    int shareDeleteRetentionPolicy_days "1 to 365, default 7, Contoso sets 14 or more"
+  }
+
+  RECOVERY_POINT_VAULT {
+    string location "vault storage, outside the source account fault domain"
+    string sizeCap "10 TB per share and 10 million files per share"
+    string fileCap "4 TB maximum single file"
+    string restoreScope "full share only - vaulted backup has no item-level recovery"
+  }
+
+  RECOVERY_POINT_SNAPSHOT {
+    string lease "infinite lease held by Azure Backup"
+    string restoreScope "full share or up to 99 items per job"
+    string coveredBy "NOT covered by vault soft delete or vault immutability"
+  }
+
+  PAIRED_REGION_REPLICA {
+    string region "East US"
+    string availability "up to 48 h after enabling CRR, then up to 12 h per recovery point"
+    string restoreScope "alternate location in the secondary region"
+  }

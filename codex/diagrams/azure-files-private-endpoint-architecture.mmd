@@ -1,0 +1,29 @@
+%% Azure Files private endpoint over ExpressRoute - Contoso profile
+%% Source: codex/blueprint-azure-files-private-endpoint.md (Microsoft Learn: Configure Azure Files network endpoints; DNS forwarding for Azure Files)
+flowchart LR
+  subgraph Contoso[Contoso network]
+    FS[File servers with Azure File Sync agent]
+    WS[Workstations and apps mounting shares directly]
+    IB[("Infoblox grid - DNS and IPAM")]
+  end
+  subgraph ER[ExpressRoute private peering]
+    CKT[Circuit + gateway]
+  end
+  subgraph Hub[Hub VNet]
+    GW[ExpressRoute gateway]
+    RES[DNS Private Resolver - inbound endpoint]
+  end
+  subgraph Spoke[Private-endpoint spoke VNet]
+    PE[Private endpoint - sub-resource file - 10.x.x.x]
+    PDZ[("privatelink.file.core.windows.net - A account to 10.x.x.x")]
+  end
+  SA[("Storage account - defaultAction Deny + AzureServices bypass")]
+  SSS[Storage Sync Service]
+  BK[Azure Backup]
+  FS -->|HTTPS 443 FileREST| CKT
+  WS -->|SMB 445| CKT
+  CKT --> GW --> PE --> SA
+  IB -.->|conditional forwarder privatelink.file.core.windows.net| RES
+  RES --> PDZ
+  SSS -->|trusted services path - Microsoft network| SA
+  BK -->|Azure-internal - no private endpoint needed| SA

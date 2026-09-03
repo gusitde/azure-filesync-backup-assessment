@@ -1,0 +1,48 @@
+%% The five ways to point Contoso DNS at Azure, read as a matrix - what each one captures, what it breaks, what it costs to run, and Contoso verdict
+%% Source: Microsoft Learn "Configure DNS forwarding for Azure Files" (Microsoft's own method forwards the whole storage suffix, plus the cross-tenant warning), "Azure Private Endpoint DNS integration" (conditional forward the PUBLIC zone name, caution on overriding a zone in public use), "Azure DNS Private Resolver endpoints and rulesets" (wildcard rule ignores the reserved two-label domains and its target must resolve public names), "Troubleshoot network connectivity - Azure Migrate" (hosts file is for testing); codex/blueprint-azure-dns-for-private-endpoints.md step 3 and step 4
+flowchart LR
+  subgraph OPT["The option"]
+    O1["A. Forward-only zones for the seven privatelink names to the inbound endpoint 10.100.20.4"]
+    O2["B. Forward the whole public suffix - core.windows.net, afs.azure.net, vaultcore.azure.net, prod.migration.windowsazure.com, siterecovery.windowsazure.com"]
+    O3["C. Wildcard rule for . in the ruleset, or a catch-all forwarder on the grid"]
+    O4["D. Infoblox vNIOS inside Azure as the VNet DNS server, forwarding to 168.63.129.16"]
+    O5["E. hosts file entries on the file servers and the Migrate appliance"]
+  end
+
+  subgraph CAP["What the answer set becomes"]
+    C1["Only names already under a privatelink suffix. The public CNAME is still resolved by normal recursion, so nothing else in core.windows.net changes behaviour"]
+    C2["Every name in that public suffix for every tenant on earth is answered by Azure DNS through your resolver. Microsoft's documented method, and the widest one that still works"]
+    C3["Everything not matched by a longer rule. Note that the reserved two-label domains - windows.net, azure.com, azure.net, windowsazure.us - are IGNORED by a wildcard rule, so it never captures the names you actually wanted"]
+    C4["Whatever vNIOS is configured to answer. The VNet no longer consults its linked private DNS zones at all, because custom DNS servers take precedence over them"]
+    C5["One name on one machine. Nothing else on the network is affected and nothing else can see it"]
+  end
+
+  subgraph BREAK["What it breaks or risks"]
+    B1["Nothing structurally. The cost is one forward zone per new privatelink service, so a forgotten zone is a per-service outage rather than an estate-wide one"]
+    B2["A storage account in another tenant that uses private endpoints returns NXDOMAIN, because Azure DNS answers with a CNAME that exists in no zone linked here. The documented workaround is to build your own cross-tenant private endpoint"]
+    B3["If the wildcard target cannot resolve public names, Azure services that depend on public resolution fail. Combined with the reserved-domain rule, this option gives maximum blast radius for minimum benefit"]
+    B4["Two DNS control planes to keep in step, and a second patched appliance in the path. Choosing it means the ruleset and the zone links stop being the lever they are in options A and B"]
+    B5["Invisible to every DNS test. Resolve-DnsName still shows the public chain while the application reaches the private address, so evidence and behaviour disagree. Survives an endpoint recreation as a stale pointer nobody looks for"]
+  end
+
+  subgraph RUN["Cost to run"]
+    R1["One Infoblox change ticket per new privatelink zone. Discoverable - the seven zones are enumerable and testable"]
+    R2["One change ticket ever, then nothing. Lowest running cost, highest coupling"]
+    R3["One rule, then permanent uncertainty about what it is capturing"]
+    R4["An appliance pair to size, patch and monitor, plus its own forwarders"]
+    R5["Per server, per name, forever, with no inventory"]
+  end
+
+  subgraph VERD["Contoso verdict"]
+    V1["CHOSEN. Infoblox stays authoritative for contoso.local and keeps normal recursion for public names. Azure answers only for privatelink names"]
+    V2["Acceptable fallback, only if the grid genuinely cannot forward a sub-zone. Record the cross-tenant caveat in the design as an accepted risk"]
+    V3["Rejected"]
+    V4["Rejected as a second pattern. One pattern or the other, never both in the same VNet"]
+    V5["Testing only, and removed at incident closure. The runbook gate greps the hosts file for privatelink and expects zero lines"]
+  end
+
+  O1 --> C1 --> B1 --> R1 --> V1
+  O2 --> C2 --> B2 --> R2 --> V2
+  O3 --> C3 --> B3 --> R3 --> V3
+  O4 --> C4 --> B4 --> R4 --> V4
+  O5 --> C5 --> B5 --> R5 --> V5

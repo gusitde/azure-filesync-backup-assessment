@@ -1,0 +1,40 @@
+%% What the tiering job actually evaluates every 60 minutes, the free-space arithmetic, and the road into low disk space mode
+%% Source: Microsoft Learn "Understand Azure File Sync cloud tiering" (heatmap, low disk space threshold table, event 19000), "Choose Azure File Sync cloud tiering policies" (60 minute evaluation, free space policy takes precedence over the date policy, minimum tierable size table, FSRM caveat), "Troubleshoot Azure File Sync cloud tiering" (tiering HRESULTs), read 2026-09-03; docs/RULES.md TIER-03, TIER-04, SRV-03, SRV-09
+flowchart TD
+  START["Tiering job wakes on the server endpoint - every 60 minutes in the normal state, every 60 seconds in low disk space mode"] --> Q1{"Has the initial upload of this endpoint finished?"}
+  Q1 -->|"no"| X1["Volume free space policy does not act at all yet. Files report 0x80c86045 ECS_E_INITIAL_UPLOAD_PENDING or 0x80C86050 ECS_E_REPLICA_NOT_READY_FOR_TIERING. Only the optional date policy acts, file by file, as each file finishes uploading"]
+  Q1 -->|"yes"| Q2{"Is current volume free space below the volume free space policy?"}
+  X1 --> Q2
+
+  Q2 -->|"yes"| SPACE["Read the heat map in tiering order - Get-StorageSyncHeatStoreInformation -IndexName FilesToBeTieredBySpacePolicy. Heat position is MAX of last access time, last modified time, creation time"]
+  Q2 -->|"no"| Q3{"Is a date policy configured on this endpoint?"}
+
+  SPACE --> OVER["Tier past the target on purpose. Worked example from the product docs - policy 20 percent, agent notified at 19 percent, it frees to about 25 percent, roughly 30 GiB, in one session"]
+  Q3 -->|"yes"| DATE["Tier files not read or written for tierFilesOlderThanDays - index FilesToBeTieredByDatePolicy. If Data Deduplication is on, MinimumFileAgeDays is added to the wait, so 7 plus 30 tiers at 37 days"]
+  Q3 -->|"no"| IDLE["Nothing to do this hour. This is the recommended Contoso starting state - free space 20 percent, date policy disabled"]
+
+  OVER --> ELIG
+  DATE --> ELIG
+  ELIG{"Per file eligibility - every check must pass"}
+  ELIG -->|"file smaller than MAX of twice the cluster size and 8 KiB"| E1["0x80c80261 ECS_E_GHOSTING_MIN_FILE_SIZE. On 4 KiB clusters nothing under 8 KiB ever tiers. On 64 KiB clusters nothing under 128 KiB tiers, which is why rule SRV-09 asks for 4 KiB to 32 KiB clusters"]
+  ELIG -->|"name, extension or path matches GhostingExclusionList"| E2["0x80C80285 ECS_E_GHOSTING_SKIPPED_BY_CUSTOM_EXCLUSION_LIST. Event 9001 lists the exclusions in force. Exclusions never apply to files that are already tiered"]
+  ELIG -->|"not yet synced to the share"| E3["0x80c80264 or 0x80c80269 - it will tier after the next successful upload"]
+  ELIG -->|"open handle or being recalled right now"| E4["0x80c86043 ECS_E_GHOSTING_FILE_IN_USE or 0x800703e3 ERROR_OPERATION_ABORTED - retried automatically"]
+  ELIG -->|"a reparse point that is not a Data Deduplication one"| E5["0x80c80262 ECS_E_GHOSTING_UNSUPPORTED_RP - never tiers"]
+  ELIG -->|"filter driver not loaded"| E6["0x80c86041 ECS_E_AFS_FILTER_NOT_LOADED - fltmc load storagesync, and if that fails reinstall the agent"]
+  ELIG -->|"all checks pass"| TIER["Tier - StorageSync.sys replaces the stream with a reparse point, size on disk becomes zero, attributes become A L O plus M on Windows Server 2019 and later"]
+
+  TIER --> GC["End of tiering session - Azure File Sync starts Data Deduplication garbage collection so freed chunks are actually returned to the volume"]
+  GC --> LOW{"Free space still below the low disk threshold?"}
+
+  MATH["Low disk threshold equals MIN of three numbers - 10 percent of volume size in GiB, the volume free space policy expressed in GiB, and 20 GiB. Product examples - a 100 GiB volume at 7 percent gives 7 GiB, so 5 GiB free is low disk. A 300 GiB volume at 8 percent gives MIN of 30, 24 and 20, so the threshold is 20 GiB and 18 GiB free is low disk"]
+  MATH -.-> LOW
+
+  LOW -->|"yes"| LDM["Low disk space mode - agent v15.1 and later. Checks for files to tier every minute, tiers during initial upload, and stops persisting recalls to disk so a reopened file is downloaded again. Invoke-StorageSyncFileRecall is the one exception that still persists. Event 19000 every minute with IsLowDiskMode true, rule TIER-03"]
+  LOW -->|"no"| OK["Normal state - sleep one hour"]
+  LDM --> FIX["Get out by growing the volume or freeing space outside the endpoint. Do not simply lower the policy below 10 percent, rule TIER-04 - the reparse points, the sync database and the heat store all live on the same volume"]
+
+  FSRM["Trap - an FSRM hard quota applied at the volume root makes real free space and quota-limited free space disagree, and Azure File Sync tiers endlessly trying to satisfy a target it can never reach. Apply FSRM quotas at folder level"]
+  FSRM -.->|"false low free space"| Q2
+  PREC["Precedence - the volume free space policy always wins over the date policy. Recently used files are tiered anyway if the volume needs the space"]
+  PREC -.-> Q2

@@ -1,0 +1,56 @@
+%% The backup privacy boundary - what a Recovery Services vault private endpoint actually covers, and why none of it applies to Azure Files
+%% Source: Microsoft Learn - Private endpoints overview for Azure Backup (sub-resources AzureBackup and AzureSiteRecovery, supported scenarios, 11 private IPs, 12 endpoints per vault, new vaults only, Entra ID excluded); Back up Azure Files FAQ (snapshots stay in the same storage account, zero MB transferred, key-based access required, 200 snapshot cap, delete lock); codex/blueprint-azure-files-backup-protection.md "Why ExpressRoute is not involved"; Assess-AzFileSyncExport.ps1 NET-09 and SEC-04
+flowchart TB
+  subgraph COVERED["What a vault private endpoint DOES cover - sub-resources AzureBackup and AzureSiteRecovery"]
+    V1["Backup and restore of SQL Server and SAP HANA running inside an Azure VM"]
+    V2["MARS agent backup from a server"]
+    V3["System Center DPM 2022 and MABS v4 or later"]
+    V4["File recovery from an Azure VM backup, restricted to virtual networks that hold a vault endpoint"]
+    V5["Cost of that path - one connection consumes 11 private IPs, so size the subnet at a slash 25. Twelve endpoints per vault maximum. Only creatable on a vault with no registered items yet"]
+    V6["Still public even then - Microsoft Entra ID. Backup private endpoints explicitly exclude it, so the Entra FQDNs stay on the allow-list"]
+  end
+
+  subgraph NOTCOVERED["What it DOES NOT cover - and this is Contoso's whole backup scope"]
+    N1["Azure Files backup. Microsoft states plainly that an Azure Files backup is stored in the local storage account, so it needs no private endpoint for backup or for restore"]
+    N2["Snapshot tier - Azure Backup calls the storage account over the trusted-services path and takes a share snapshot in place. Data transferred is 0 MB and the vault replication setting does not apply"]
+    N3["Vaulted tier - changed blocks move from the storage account into vault storage. That hop is Azure-internal, has no customer-facing network object, and cannot be pinned to the circuit"]
+    N4["Restores land back in the Azure file share. The bytes reach Contoso only afterwards, pulled by File Sync over the file private endpoint. Assessor NET-09"]
+  end
+
+  subgraph MUSTSTAYOPEN["Controls that must stay open or Backup fails while the network is provably correct"]
+    K1["allowSharedKeyAccess true. Azure Backup uses key-based access for backup and restore of Azure Files even when identity-based access is configured. Assessor SEC-04"]
+    K2["networkAcls.bypass includes AzureServices. Microsoft.RecoveryServices is on the trusted-services list"]
+    K3["publicNetworkAccess Enabled with defaultAction Deny. Disabled kills the trusted-services path and takes Backup down with File Sync"]
+    K4["The CanNotDelete lock Azure Backup places on the storage account. Snapshots live in that account, so deleting it destroys every recovery point"]
+  end
+
+  subgraph ORGPLANE["The only Contoso-side traffic in the whole backup design"]
+    P1["Administrator to portal.azure.com and management.azure.com over HTTPS 443. Management plane only, and it stays public"]
+    P2["Restored files arriving on a Contoso file server through the File Sync private path already built in phases 3 to 8"]
+  end
+
+  V1 --> V5
+  V2 --> V5
+  V3 --> V5
+  V4 --> V5
+  V5 -.->|"none of this is in scope for Contoso"| N1
+  V6 -.->|"same allow-list applies to the File Sync agent"| P1
+
+  N1 --> N2
+  N1 --> N3
+  N2 --> N4
+  N3 --> N4
+  N4 --> P2
+
+  N2 --> K1
+  N2 --> K2
+  N3 --> K2
+  K2 --> K3
+  N2 --> K4
+
+  DECISION["Contoso decision - do not deploy a private endpoint on the regional Recovery Services vault. It buys nothing for Azure Files, burns 11 addresses, cannot be added to a vault that already protects shares, and blocks cross-region restore for SQL and SAP HANA if those workloads ever join the vault"]
+  N1 --> DECISION
+  V5 --> DECISION
+
+  HONEST["Say this in the report - backup traffic for Azure Files cannot be placed on the ExpressRoute circuit, because there is no leg of it that touches Contoso network. This is a property of the service, not a gap in the design"]
+  DECISION --> HONEST

@@ -1,0 +1,59 @@
+%% Infrastructure as code with Azure Verified Modules, and the drift loop that catches what the template cannot see
+%% Source: codex/playbook-deploy-secure-storage-account-and-share.md and codex/playbook-deploy-dns-private-resolver-and-forwarders.md for the pinned AVM versions, the deployment commands and the gate rules; codex/playbook-enable-azure-backup-for-file-shares.md and codex/playbook-enable-file-sync-private-endpoint-and-cutover.md for the settings that are applied outside Bicep; the declared artifact registry table in each blueprint
+flowchart TB
+  subgraph SOT["Source of truth - the repository"]
+    BICEP["main.bicep with EVERY module reference pinned<br/>br/public colon avm/res/storage/storage-account 0.33.0<br/>avm/res/network/private-endpoint 0.12.1<br/>avm/res/network/private-dns-zone 0.8.1<br/>avm/res/network/dns-resolver 0.5.8<br/>avm/res/network/dns-forwarding-ruleset 0.5.4"]
+    PARAM["Parameter file per environment - account names, PE subnet id,<br/>zone resource ids, Log Analytics workspace id, admin egress IPs, tags"]
+    CODEX["Codex entries - the blueprint each template implements<br/>and the declared artifact registry it must satisfy"]
+  end
+  subgraph PIPE["Pipeline"]
+    PR["Pull request with an open check-out task"]
+    WHATIF["az deployment group what-if"]
+    GATE1{"what-if output matches the intent<br/>and no unexpected delete appears"}
+    DEPLOY["az deployment group create - the AVM modules are idempotent,<br/>a re-run with identical parameters changes nothing"]
+    GATE2{"Gate rules pass<br/>publicNetworkAccess Enabled with Deny plus AzureServices,<br/>soft delete at least 14 days,<br/>Resolve-DnsName returns 10.x from a Contoso server"}
+  end
+  subgraph OOB["Applied OUTSIDE the template - the template will never show these as drift"]
+    O1["Require Encryption in Transit for SMB - Bicep and CLI leave it unset,<br/>Update-AzStorageFileServiceProperty sets it"]
+    O2["Key rotation and keyExpirationPeriodInDays 180"]
+    O3["Defender for Storage subscription plan"]
+    O4["AD DS join of the storage account - Join-AzStorageAccount, AzFilesHybrid"]
+    O5["Vault hardening - soft delete AlwaysON, immutability Locked, MUA Resource Guard,<br/>cross-region restore, backup policies with the vault tier"]
+    O6["Storage Sync Service incomingTrafficPolicy and Set-AzStorageSyncServiceIdentity"]
+    O7["Infoblox conditional forwarders and IPAM records - not Azure objects at all"]
+  end
+  subgraph DRIFT["Drift detection - run on a schedule, not only after a deploy"]
+    D1["az deployment group what-if against the committed template"]
+    D2["az policy state list for the landing-zone scope"]
+    D3["Export-AzFileSyncEnvironment.ps1 then Assess-AzFileSyncExport.ps1 -PrivateTrafficRequired"]
+    D4["Diff the live objects against the declared artifact registry in each blueprint"]
+  end
+  CLASS{"A delta was found. Is it declared in an open check-out task"}
+  R1["Declared and intended - back-port the change into main.bicep or the playbook,<br/>update the codex entry, close the task with the evidence"]
+  R2["Declared as an emergency fix - codify it within the agreed window,<br/>or it becomes permanent undocumented drift"]
+  R3["UNDECLARED - treat as an incident. Read the activity log for who and when,<br/>decide revert or adopt, then open the task retrospectively"]
+  R4["No delta - record the clean run as the periodic evidence"]
+
+  BICEP --> PR
+  PARAM --> PR
+  CODEX -->|"the design the template must match"| PR
+  PR --> WHATIF --> GATE1
+  GATE1 -->|"no"| PR
+  GATE1 -->|"yes"| DEPLOY --> GATE2
+  GATE2 -->|"fail"| PR
+  GATE2 -->|"pass"| OOB
+  OOB -->|"each step has its own verify command in the playbook"| DRIFT
+  DEPLOY --> DRIFT
+  D1 --> CLASS
+  D2 --> CLASS
+  D3 --> CLASS
+  D4 --> CLASS
+  CLASS -->|"yes and intended"| R1
+  CLASS -->|"yes but out of band"| R2
+  CLASS -->|"no"| R3
+  CLASS -->|"nothing found"| R4
+  R1 -->|"commit"| BICEP
+  R2 -->|"commit"| BICEP
+  R3 -->|"revert or adopt, then commit"| BICEP
+  WARN["Why two oracles are needed. what-if only compares the template against ARM<br/>properties the modules own. Everything in the OUTSIDE box is invisible to it -<br/>an operator who sets allowSharedKeyAccess to false, disables the SMB encryption<br/>requirement, or unlocks vault immutability produces a clean what-if and a broken estate.<br/>The kit assessor is the oracle that sees those."]
+  WARN -.->|"applies to"| DRIFT

@@ -1,0 +1,70 @@
+%% Identity failure map - the trigger, the symptom on the wire, how far it spreads and what contains it - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md, codex/runbook-storage-key-rotation-and-shared-key-incidents.md, docs/RULES.md SEC-04 SEC-07 SEC-13 AFS-12 AFS-19 BKP-18 (Microsoft Learn: Update the password of your storage account identity in AD DS; Assign share-level permissions; Microsoft Entra Kerberos authentication; How to use managed identities with Azure File Sync)
+flowchart TB
+  subgraph TRIG["Trigger - what actually happens in the field"]
+    C1["The AD computer object passes the OU maximum password age, or an AD cleanup script deletes the principal with the expired password"]
+    C2["Rotation stopped after kerb2 - nobody came back several hours later to regenerate kerb1"]
+    C3["msDS-SupportedEncryptionTypes left on RC4 - Azure Files supports AES-256 and does NOT support AES-128"]
+    C4["A share role is assigned to a User principal, or to a group that exists only in Entra ID and contains no synced users"]
+    C5["The synced identities sit in a different Entra tenant than the one that manages the subscription holding the account"]
+    C6["allowSharedKeyAccess set to false while Azure Backup protects the shares, or while a File Sync server still authenticates with a certificate"]
+    C7["Entra Kerberos account - MFA conditional access still covers the storage account app, or the privatelink FQDN was never added to that app"]
+    C8["Storage File Data Privileged Contributor left on a person or a migration group after the cut-over"]
+  end
+
+  subgraph SYM["Symptom the operator sees"]
+    S1["Every Kerberos mount fails - error 1396 the target account name is incorrect, KRB_AP_ERR_MODIFIED on the wire"]
+    S2["A superseded Kerberos key stays valid, so a leaked kerb1 still authenticates as the storage account"]
+    S3["The DC issues a ticket the storage account cannot validate - the mount fails with no useful client error"]
+    S4["Gate 1 never passes - access denied at share level and the NTFS DACL is never consulted"]
+    S5["No SID in the ticket maps to a principal Azure can see - role assignments look correct in the portal and still do nothing"]
+    S6["Backup jobs fail (BKP-18) and shared-key File Sync servers stop syncing (AFS-12) - user SMB access is untouched"]
+    S7["net use returns System error 1327 account restrictions, or error 1326 the username or password is incorrect over private link"]
+    S8["Reads and rewrites of any DACL in any share with no ownership change and no NTFS denial in the way"]
+  end
+
+  subgraph RAD["Blast radius"]
+    R1["EVERY share in the storage account at once - one identity source per account, so one expired object takes down home, dept, archive, scans and gis together"]
+    R2["The account credential surface, not availability - nothing breaks today, the exposure is a valid key nobody is tracking"]
+    R3["One principal on one share - the smallest radius in this map"]
+    R4["The Backup and File Sync data planes only"]
+    R5["Every file in every share of the account, ACL-blind and without an ownership trail"]
+    R6["Bounded by the forest - only contoso.local can authenticate at all, a second forest would need an explicit forest trust"]
+  end
+
+  subgraph CONT["What contains it"]
+    K1["File Sync keeps serving users through the Windows Servers - they use FileREST over HTTPS 443 and enforce the NTFS ACLs they already carry, so no Kerberos failure reaches those users"]
+    K2["Azure Backup never presents a Kerberos ticket - snapshots and vault jobs are unaffected by the AD object"]
+    K3["Break-glass mount from an admin station with Storage File Data SMB Admin, or with the account key while SEC-04 keeps key access enabled"]
+    K4["Repair - Update-AzStorageAccountADObjectPassword -RotateToKerbKey kerb2, wait several hours, rotate back to kerb1, then Test-AzStorageAccountADObjectPasswordIsKerbKey"]
+    K5["Prevention - keep the object in an OU that does not expire passwords, alert on object age, keep KerberosEncryptionType AES256"]
+    K6["Prevention - assign share roles to synced GROUPS only (SEC-13), review the two Privileged roles quarterly, and never flip allowSharedKeyAccess while Backup protects a share (SEC-04)"]
+  end
+
+  C1 --> S1
+  C2 --> S2
+  C3 --> S3
+  C4 --> S4
+  C5 --> S5
+  C6 --> S6
+  C7 --> S7
+  C8 --> S8
+
+  S1 --> R1
+  S2 --> R2
+  S3 --> R1
+  S4 --> R3
+  S5 --> R3
+  S6 --> R4
+  S7 --> R1
+  S8 --> R5
+  R1 --> R6
+
+  R1 -->|"contained by"| K1
+  R1 -->|"contained by"| K2
+  R1 -->|"restored by"| K3
+  R1 -->|"repaired by"| K4
+  R1 -.->|"avoided by"| K5
+  R3 -.->|"avoided by"| K6
+  R5 -.->|"avoided by"| K6
+  R4 -.->|"avoided by"| K6

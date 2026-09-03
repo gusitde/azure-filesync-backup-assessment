@@ -1,0 +1,42 @@
+%% Authentication state of an Azure File Sync deployment - shared key to managed identity and back - Contoso profile
+%% Source: codex/blueprint-azure-file-sync-private-path.md and docs/RULES.md AFS-12 and AFS-19 (Microsoft Learn: How to use managed identities with Azure File Sync)
+stateDiagram-v2
+  direction TB
+
+  state "Shared key - UseIdentity False, server ActiveAuthType Certificate, LatestApplicationId empty" as SharedKey
+  state "Server has an identity but is not using it - LatestApplicationId holds a GUID, ActiveAuthType still Certificate" as Ready
+  state "Set-AzStorageSyncServiceIdentity running - several minutes, longer on large topologies" as Configuring
+  state "Managed identity active - UseIdentity True, ApplicationId holds a GUID, ActiveAuthType ManagedIdentity" as MIActive
+  state "New server registered later - it does NOT inherit the configuration and falls back to shared key" as NewServer
+  state "Blocked - cross-tenant topology is unsupported, the server cannot connect" as Blocked
+  state "Shared key can now be disabled for File Sync, but Azure Backup for Azure Files still requires allowSharedKeyAccess true" as KeyOptional
+
+  [*] --> SharedKey
+  SharedKey --> SharedKey : agent below 20.0.0.0 or no Arc, assessor reports AFS-12
+  SharedKey --> Ready : agent 20.0.0.0 or later AND the server is Arc-enabled on-premises or an Azure VM with system-assigned identity
+  Ready --> Blocked : Storage Sync Service, server resource, identity or role assignments in different Entra tenants
+  Ready --> Configuring : operator holds Azure File Sync Administrator or Owner or roleassignments write, with Az.StorageSync 2.5.0 or later
+  Configuring --> MIActive : grants Storage Account Contributor to the service identity on the storage accounts, Storage File Data Privileged Contributor to the service identity and to each server identity on the shares, then flips UseIdentity
+  MIActive --> MIActive : up to 15 minutes before the server actually authenticates with the identity
+  MIActive --> NewServer : a new Windows Server is registered with the Storage Sync Service
+  NewServer --> Configuring : re-run Set-AzStorageSyncServiceIdentity or use Turn on Managed identity in the portal
+  NewServer --> SharedKey : left unattended, the new server keeps using the account key, assessor reports AFS-19
+  MIActive --> KeyOptional : every registered server shows ActiveAuthType ManagedIdentity
+  KeyOptional --> [*]
+
+  note right of SharedKey
+    Contoso starting state on the File Sync accounts.
+    SEC-04 stays open by design while this holds.
+  end note
+
+  note right of MIActive
+    Verify with Get-AzStorageSyncService UseIdentity True
+    and Get-AzStorageSyncServer ActiveAuthType ManagedIdentity.
+    The private path over ExpressRoute is independent of this
+    state - managed identity is recommended, not a prerequisite.
+  end note
+
+  note right of KeyOptional
+    Setting allowSharedKeyAccess false here still breaks
+    Azure Backup jobs and is the BKP-18 incident class.
+  end note

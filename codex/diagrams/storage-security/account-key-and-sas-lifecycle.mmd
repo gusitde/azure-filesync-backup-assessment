@@ -1,0 +1,67 @@
+%% Lifecycle of the two account keys, the SAS tokens signed from them and the AD object kerb keys - and the one ordering that causes an outage
+%% Source: codex/runbook-storage-key-rotation-and-shared-key-incidents.md classes 1, 2, 5 and 6 and codex/playbook-harden-existing-storage-account.md step 4; Microsoft Learn - Manage account access keys (rotation order, keyCreationTime, key expiration policy, SAS revocation, listkeys roles); Enable AD DS authentication for Azure Files
+stateDiagram-v2
+  direction LR
+
+  state "The two 512-bit account keys - key1 primary and key2 secondary" as PAIR {
+    direction TB
+    state "Never rotated - keyCreationTime is null on both keys. A key expiration policy CANNOT be created in this state" as VIRGIN
+    state "key1 carries every key-based client, key2 is the idle standby. Microsoft rule - use ONE key everywhere, never key1 here and key2 there" as STEADY1
+    state "Clients repointed to key2. key1 is now unused but still valid" as CUTOVER
+    state "key1 regenerated. Every account SAS and service SAS signed with the old key1 is dead at that instant" as ROT1
+    state "Clients repointed to the new key1. key2 idle again" as STEADY2
+    state "key2 regenerated. Both keys now carry a keyCreationTime" as ROT2
+    state "keyPolicy keyExpirationPeriodInDays is 180. The portal shows a rotation reminder and built-in policy 044985bb reports compliant" as POLICY
+    state "OUTAGE - the key in use was regenerated first. Every key-based mount, backup job and SAS fails at once" as OUTAGE
+
+    [*] --> VIRGIN
+    VIRGIN --> STEADY1
+    STEADY1 --> CUTOVER : step 1 repoint clients to key2
+    CUTOVER --> ROT1 : step 2 regenerate key1
+    ROT1 --> STEADY2 : step 3 repoint clients to the new key1
+    STEADY2 --> ROT2 : step 4 regenerate key2
+    ROT2 --> POLICY : both keys rotated once, so the policy is settable at last
+    POLICY --> CUTOVER : the next 180-day cycle restarts at step 1
+    STEADY1 --> OUTAGE : regenerating the key clients hold, with no repoint first
+    OUTAGE --> CUTOVER : repoint clients to the untouched key, then resume the order
+  }
+
+  state "Credentials derived from an account key" as DERIVED {
+    direction TB
+    state "Account SAS - signed with key1 or key2" as ACCSAS
+    state "Service SAS - signed with key1 or key2" as SVCSAS
+    state "Revoked the instant its signing key is regenerated. It must be reissued from the new key" as DEAD
+    state "User delegation SAS - signed with Entra credentials and immune to key rotation, but Blob Storage ONLY, so a file share cannot use one" as UDSAS
+
+    [*] --> ACCSAS
+    [*] --> SVCSAS
+    ACCSAS --> DEAD : signing key regenerated
+    SVCSAS --> DEAD : signing key regenerated
+    DEAD --> ACCSAS : reissue from the new key
+    UDSAS --> UDSAS : never an option for Azure Files
+  }
+
+  state "kerb1 and kerb2 - the Kerberos keys of the AD DS join, rotated on their own clock" as KERB {
+    direction TB
+    state "The contoso.local computer object in OU=AzureFiles holds the password derived from kerb1" as KERB1
+    state "Rotated to kerb2 with Update-AzStorageAccountADObjectPassword" as KERB2
+    state "Password expired under OU policy, or RC4 disabled in the domain before the object moved to AES-256. Mounts fail with error 1396 or KRB_AP_ERR_MODIFIED" as KFAIL
+
+    [*] --> KERB1
+    KERB1 --> KERB2 : rotate, alternating each cycle
+    KERB2 --> KERB1 : rotate back on the next cycle
+    KERB1 --> KFAIL : OU password expiry was left enabled
+    KFAIL --> KERB2 : rotate the object password, Set-ADComputer AES256, klist purge on the clients
+  }
+
+  note right of KERB
+    Three rotations, three blast radii, no overlap.
+    Regenerating key1 or key2 does not touch kerb1 or kerb2,
+    and rotating the AD object password does not touch the
+    account keys. Only an account key rotation revokes SAS.
+    Listing or regenerating either kind of key needs
+    Microsoft.Storage/storageAccounts/listkeys/action or
+    regeneratekey/action, carried by Owner, Contributor and
+    Storage Account Key Operator Service Role - three roles
+    Contoso should count and name.
+  end note

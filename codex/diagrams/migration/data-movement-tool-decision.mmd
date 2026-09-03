@@ -1,0 +1,34 @@
+%% Which mechanism moves this share - the decision an engineer follows per share, not per project - Contoso profile
+%% Source: Microsoft Learn "Migration overview for SMB Azure file shares" (tool table and fidelity column), "Migrate data into Azure File Sync with Azure Data Box", "Migrate to Azure Files using RoboCopy", Azure Storage Mover service overview
+flowchart TB
+  START(["One Contoso share on the wave list<br/>size, item count and owner recorded"]) --> ROOT
+  ROOT["Gate zero: set the ACLs on the root directory of the target Azure file share<br/>BEFORE the bulk copy - root ACL changes propagate slowly afterwards"] --> Q1
+  Q1{"Does Contoso keep a local cache<br/>for this share after go-live?"}
+  Q1 -->|"yes - hybrid, users stay on the file server"| Q2
+  Q1 -->|"no - cloud only, users mount Azure Files"| Q6
+  Q2{"Is the data on Windows Server 2016 or newer<br/>on direct attached storage,<br/>where the File Sync agent can be installed?"}
+  Q2 -->|"no - NAS or Server 2012 and earlier"| Q5
+  Q2 -->|"yes"| Q3
+  Q3{"Can the first full upload finish<br/>inside the ExpressRoute budget<br/>and the wave window?"}
+  Q3 -->|"yes"| AFS["Azure File Sync direct<br/>sync group with the Azure file share as cloud endpoint,<br/>server endpoint on the existing path, cloud tiering optional<br/>up to 30 Azure file shares per server or cluster"]
+  Q3 -->|"no - too much data for the link"| DBX
+  DBX["Azure Data Box, then File Sync with authoritative upload<br/>copy with robocopy over SMB only - not the data copy service<br/>Disk 8 TiB each up to 40 TiB, Data Box 80, 120 or 525 TiB, Heavy 1 PiB<br/>one appliance feeds at most 10 storage accounts"] --> AUTH
+  AUTH{"Does the server path match the folder hierarchy<br/>the Data Box created in the share, exactly?"}
+  AUTH -->|"yes"| AUTHOK["Tick the seeding checkbox on the FIRST server endpoint<br/>initial sync mode becomes authoritative upload"]
+  AUTH -->|"no - any mismatch"| AUTHBAD["STOP. Authoritative upload on a mismatched hierarchy<br/>deletes all data in the Azure file share and re-uploads from the server.<br/>Fix the hierarchy or fall back to a plain first sync"]
+  Q5["Storage Mover upload to the Azure file share,<br/>then File Sync on a NEW Windows Server,<br/>or Data Box plus File Sync using the NAS guide"] --> DONE
+  Q6{"Is the share large relative to the link,<br/>so a wire-only seed misses the window?"}
+  Q6 -->|"yes"| DBX2["Data Box for the bulk seed,<br/>then Storage Mover for the online catch-up<br/>metadata-only changes upload as metadata, not whole files"]
+  Q6 -->|"no"| Q7
+  Q7{"Many shares, repeatable runs,<br/>central progress and copy logs needed?"}
+  Q7 -->|"yes"| SMV["Azure Storage Mover<br/>one storage mover resource, a project per workload,<br/>a job definition per share - source and target are locked once created"]
+  Q7 -->|"no - a handful of shares, an operator at the console"| RC["RoboCopy to the mounted Azure file share<br/>mount with admin-level access, run /MIR passes until the delta is small"]
+  AFS --> DONE
+  AUTHOK --> DONE
+  DBX2 --> DONE
+  SMV --> DONE
+  RC --> DONE
+  AUTHBAD --> DONE
+  DONE(["Record the choice, the fidelity flags and the measured catch-up time<br/>in the wave sheet - the last catch-up time IS the cutover downtime estimate"])
+  NO["Excluded by fidelity, whatever the volume:<br/>AzCopy sync does not delete source-deleted files on the target,<br/>Azure Storage Explorer loses ACLs,<br/>Azure Data Factory copies no metadata,<br/>Data Box Disk does not preserve file metadata"]
+  START -.->|"never selected for a Contoso share"| NO

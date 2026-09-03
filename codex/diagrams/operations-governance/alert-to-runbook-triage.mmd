@@ -1,0 +1,59 @@
+%% What the on-call engineer does when a File Sync or Backup alert fires - the decision path from signal to codex runbook
+%% Source: Microsoft Learn "Monitor Azure File Sync" Telemetry event IDs and recommended alerts; assessor rules AFS-02, AFS-04, AFS-05, AFS-15, TIER-03, TIER-04, TIER-05, TIER-06, BKP-02, BKP-18 in docs/RULES.md; codex runbooks for network lockdown, name resolution and key rotation
+flowchart TB
+  START{"Which alert fired in ag-organization-storage"}
+  START -->|"StorageSyncServerHeartbeat less than 1"| H1
+  START -->|"ServerSyncSessionResult less than 1"| S1
+  START -->|"StorageSyncLowDiskModeCount at least 1"| D1
+  START -->|"StorageSyncRecallTotalSizeBytes over 500 GiB"| R1
+  START -->|"StorageSyncAgentVersionExpirationDays over 0"| A1
+  START -->|"Recovery Services vault job failure"| B1
+
+  H1{"On the server, are FileSyncSvc and<br/>AzureStorageSyncMonitor.exe running"}
+  H1 -->|"no"| H2["Start the services, then watch Telemetry 9301<br/>GetNextJob every 30 s with status 0"]
+  H1 -->|"yes"| H3{"Debug-StorageSyncServer -TestNetworkConnectivity<br/>succeeds"}
+  H3 -->|"yes, the server was decommissioned"| H4["Unregister the server so the alert stops being noise<br/>assessor AFS-04"]
+  H3 -->|"no, a network change landed in the last 24 h"| H5["runbook-file-sync-broken-after-network-lockdown<br/>check bypass AzureServices, incomingTrafficPolicy and the<br/>four privatelink.afs.azure.net names"]
+  H3 -->|"no, DNS answers a public IP or NXDOMAIN"| H6["runbook-private-endpoint-name-resolution-and-reachability<br/>Resolve-DnsName must return 10.x from Contoso"]
+
+  S1{"Telemetry 9102 HResult on the server endpoint"}
+  S1 -->|"HResult not 0"| S2{"Is 9302 still logged every 5 to 10 min<br/>with a rising AppliedItemCount"}
+  S2 -->|"yes"| S3["Sync is making forward progress. Let it retry before escalating -<br/>a large initial upload looks like failure for hours"]
+  S2 -->|"no"| H5
+  S1 -->|"HResult 0 but PerItemErrorCount over 0"| S4["Read 9121 PersistentCount, then run<br/>Debug-StorageSyncServer -FileSyncErrorsReport<br/>assessor AFS-02 - unsupported characters, path over 2048, open handles"]
+
+  D1["Volume free space fell under the tiering policy - assessor TIER-03"]
+  D1 --> D2{"Can the data volume be extended"}
+  D2 -->|"yes"| D3["Extend the disk, then confirm the endpoint leaves low disk mode"]
+  D2 -->|"no"| D4["Lower volumeFreeSpacePercent but never under 10 percent<br/>assessor TIER-04 - below that tiering churns and recalls slow"]
+
+  R1["Read Telemetry 9059 - recall by application name and TotalEgressNetworkBytes"]
+  R1 --> R2{"Which application recalled the data"}
+  R2 -->|"antivirus, backup agent, indexer, classification tool"| R3["Exclude files carrying FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS<br/>or move the product off the server endpoint - assessor TIER-06"]
+  R2 -->|"genuine user access"| R4["The cache is too small for the working set.<br/>Check 9071 cache hit and miss bytes - assessor TIER-05"]
+
+  A1{"Is this a clustered registered server"}
+  A1 -->|"yes"| A2["InstallLatest excludes clustered servers.<br/>Schedule a manual per-node update - assessor AFS-15"]
+  A1 -->|"no"| A3["Confirm Get-StorageSyncAgentAutoUpdatePolicy and let the maintenance<br/>window run, or update now with AfsUpdater.exe"]
+
+  B1{"What does the failed backup job error say"}
+  B1 -->|"storage firewall or trusted services"| B2["Restore networkAcls bypass AzureServices, then run an<br/>on-demand backup - assessor BKP-02"]
+  B1 -->|"key access denied"| B3["allowSharedKeyAccess was set to false while shares are protected.<br/>Re-enable it - assessor BKP-18 and<br/>runbook-storage-key-rotation-and-shared-key-incidents"]
+  B1 -->|"share not found"| B4["The share was deleted. Undelete inside the 14 day window,<br/>then resume protection<br/>runbook-restore-file-share-and-share-soft-delete"]
+
+  CLOSE["Close the alert only after the NEXT scheduled signal is clean -<br/>a 9102 with HResult 0, a Completed backup job, or a resumed heartbeat -<br/>and check the change in against the open task"]
+  H2 --> CLOSE
+  H4 --> CLOSE
+  H5 --> CLOSE
+  H6 --> CLOSE
+  S3 --> CLOSE
+  S4 --> CLOSE
+  D3 --> CLOSE
+  D4 --> CLOSE
+  R3 --> CLOSE
+  R4 --> CLOSE
+  A2 --> CLOSE
+  A3 --> CLOSE
+  B2 --> CLOSE
+  B3 --> CLOSE
+  B4 --> CLOSE

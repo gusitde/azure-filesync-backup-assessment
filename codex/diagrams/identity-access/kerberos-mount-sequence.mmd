@@ -1,0 +1,46 @@
+%% Kerberos SMB mount of an Azure file share from a Contoso workstation - name resolution, ticket, share RBAC, NTFS ACL - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md and codex/blueprint-azure-files-private-endpoint.md (Microsoft Learn: On-premises AD DS authentication for Azure Files; Assign share-level permissions; Configure directory and file-level permissions; Enable AD DS authentication)
+sequenceDiagram
+  autonumber
+  participant WS as Domain-joined workstation on contoso.local
+  participant IB as Infoblox grid
+  participant RES as DNS Private Resolver inbound endpoint in the hub
+  participant DC as Contoso domain controller
+  participant PE as Private endpoint file sub-resource in the spoke
+  participant AF as Azure Files service
+  participant ARM as Azure RBAC share role assignments
+  Note over WS,AF: Step A - resolve the name to a private IP before any SMB packet is sent
+  WS->>IB: stmtyfiles01.file.core.windows.net A record ?
+  IB->>IB: public DNS returns CNAME to stmtyfiles01.privatelink.file.core.windows.net
+  IB->>RES: forward privatelink.file.core.windows.net to the inbound endpoint
+  RES-->>IB: A 10.x.x.x from the private DNS zone
+  IB-->>WS: A 10.x.x.x
+  Note over WS,DC: Step B - Kerberos, entirely on Contoso network, no Azure involvement
+  WS->>DC: AS-REQ, user already holds a TGT for CONTOSO.LOCAL
+  WS->>DC: TGS-REQ for SPN cifs/stmtyfiles01.file.core.windows.net
+  DC-->>WS: service ticket encrypted with the AD object password, AES-256, PAC carries every group SID
+  Note over WS,AF: Step C - SMB 445 over ExpressRoute private peering to the private endpoint
+  WS->>PE: SMB3.1.1 session setup on TCP 445 with the service ticket
+  PE->>AF: forwarded on the Microsoft backbone, never over the public endpoint
+  AF->>AF: decrypt the ticket with the kerb key, read the user SID and group SIDs
+  AF->>ARM: does any SID map to a synced Entra group with a share-level role ?
+  alt a synced group holds Storage File Data SMB Share Contributor
+    ARM-->>AF: gate 1 passed, share-level read write delete
+    AF->>AF: gate 2, evaluate the NTFS DACL on the directory and file
+    AF-->>WS: effective access is the MOST RESTRICTIVE of gate 1 and gate 2
+    WS->>WS: klist shows a cifs ticket, Get-SmbConnection shows the 10.x private IP
+  else no role assignment and defaultSharePermission is None
+    ARM-->>AF: gate 1 failed
+    AF-->>WS: access denied at share level, the NTFS ACL is never consulted
+    Note over WS,ARM: fix is a role assignment to the AD-synced GROUP, or a default share-level permission for non-synced principals such as computer accounts, sMSA and gMSA
+  end
+  Note over WS,AF: Failure branches seen in the field
+  alt AD object password expired or the UPN does not match the SPN
+    DC-->>WS: error 1396 target account name is incorrect, KRB_AP_ERR_MODIFIED
+    WS->>WS: repair with Update-AzStorageAccountADObjectPassword -RotateToKerbKey kerb2, then klist purge
+  else the object is still on RC4 after the July 2026 Windows Server default change to AES-256
+    DC-->>WS: ticket the storage account cannot validate, mount fails
+    WS->>WS: repair with Set-ADComputer -KerberosEncryptionType AES256, then klist purge and remount
+  else DNS returned a public IP instead of 10.x
+    WS-->>WS: the mount leaves ExpressRoute or is blocked by the storage firewall Deny rule
+  end

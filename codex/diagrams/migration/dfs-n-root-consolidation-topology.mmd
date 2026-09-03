@@ -1,0 +1,33 @@
+%% DFS-N root consolidation in front of Azure Files - the referral path, the ports, and why the namespace server is not in the data path - Contoso profile
+%% Source: Microsoft Learn "How to use DFS-N with Azure Files" (root consolidation, hash-prefixed namespace, netdom alternate name, HOST SPN covers cifs, ABE limitation, stand-alone metadata in the registry) and "Change the amount of time that clients cache referrals"
+flowchart LR
+  subgraph Contoso["Contoso - contoso.local"]
+    CLI["Department workstation<br/>still typing the old path"]
+    IB[("Infoblox grid<br/>authoritative contoso.local<br/>CNAME FILE01 to CloudDFSN.contoso.local")]
+    DC["AD DS domain controller<br/>Kerberos 88, LDAP 389 and LDAPS 636"]
+    NS["CloudDFSN namespace server<br/>member server, never a domain controller<br/>stand-alone namespace named with a leading hash plus FILE01<br/>metadata lives in the server registry, so back the registry up"]
+    HA["Windows Server failover cluster for HA<br/>register the alternate name on the cluster name object, not on a node"]
+  end
+  subgraph Edge["Contoso edge"]
+    ER["ExpressRoute private peering<br/>circuit and gateway"]
+  end
+  subgraph Azure["Azure - target region"]
+    PE["Private endpoint sub-resource file<br/>one private IP in the spoke"]
+    SA[("Storage account joined to AD DS<br/>share stmontfin01 finance<br/>Deny plus bypass AzureServices")]
+    PDZ[("privatelink.file.core.windows.net")]
+  end
+  CLI -->|"1. resolve FILE01 - UDP 53"| IB
+  IB -->|"2. CNAME answer to CloudDFSN.contoso.local"| CLI
+  CLI -->|"3. Kerberos TGS request for cifs/FILE01 - TCP 88"| DC
+  DC -->|"4. ticket issued against the namespace server account because netdom registered HOST/FILE01 there"| CLI
+  CLI -->|"5. DFS referral request over SMB 445"| NS
+  NS -->|"6. referral returns the folder target UNC \\stmontfin01.file.core.windows.net\finance<br/>folder referral cached 1800 s by default, root referral 300 s"| CLI
+  CLI -->|"7. SMB 445 Kerberos AES-256 - the ONLY data path"| ER
+  ER --> PE --> SA
+  IB -.->|"conditional forwarder for the privatelink zone to the resolver inbound endpoint"| PDZ
+  PDZ -.->|"A record for the storage account to 10.x.x.x"| PE
+  NS --- HA
+  OUT["The namespace server is out of the data path after step 6.<br/>Consequences: its bandwidth never limits the share,<br/>access-based enumeration on the target share is NOT honoured through the referral,<br/>and a client keeps using a cached referral until the TTL expires."]
+  NS -.->|"referral only, never a proxy"| OUT
+  PRE["Before the takeover works: the old share names must match the DFS folder names exactly,<br/>every non-SMB dependency on the FILE01 name must be moved first<br/>- print queues, DFS-R members, database aliases, scheduled tasks, backup jobs -<br/>because a namespace server answers with SMB referrals and nothing else."]
+  PRE -.->|"pre-condition"| NS

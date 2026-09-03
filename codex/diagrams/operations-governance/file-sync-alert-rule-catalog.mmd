@@ -1,0 +1,42 @@
+%% Contoso alert rule catalog - every metric alert rule that must exist, with its metric, threshold, window and route
+%% Source: Microsoft Learn "Monitor Azure File Sync" recommended alert table and the six alert configuration examples read 2026-09-03; assessor rules MON-01, MON-02, DATA-03, BKP-11 in docs/RULES.md; codex/blueprint-azure-files-backup-protection.md
+flowchart LR
+  subgraph SSS["Storage Sync Service sss-contoso-westus - portal Alerts then Set up recommended alerts"]
+    A1["Sync session failed<br/>metric ServerSyncSessionResult<br/>Maximum less than 1<br/>lookback 24 h, evaluate every 1 h<br/>dimension Server Endpoint Name, all current and future"]
+    A2["Files not syncing<br/>metric Files not syncing<br/>Average greater than 100<br/>lookback 5 min, evaluate every 5 min<br/>dimension Server Endpoint Name"]
+    A3["Server failed to connect<br/>metric StorageSyncServerHeartbeat<br/>Maximum less than 1<br/>lookback 6 h, evaluate every 30 to 60 min<br/>dimension Server name"]
+    A4["Low disk space mode<br/>metric StorageSyncLowDiskModeCount<br/>Maximum greater than or equal to 1<br/>lookback 12 h, evaluate every 1 h<br/>dimension Server Endpoint Name"]
+    A5["Recall size over 500 GiB in a day<br/>metric StorageSyncRecallTotalSizeBytes<br/>Total greater than 536870912000 bytes<br/>lookback 24 h, evaluate every 1 h<br/>dimension Server name"]
+    A6["Agent approaching expiration<br/>metric StorageSyncAgentVersionExpirationDays<br/>Maximum greater than 0<br/>lookback 12 h, evaluate every 1 h<br/>90 days of warning before sync stops"]
+  end
+  subgraph SA["Storage accounts holding the cloud endpoints - assessor MON-02 and DATA-03"]
+    B1["File service availability<br/>metric Availability on fileServices/default<br/>Average less than 100 percent over 5 min"]
+    B2["Share approaching quota<br/>metric FileCapacity at PT1H against FileShareCapacityQuota<br/>Contoso thresholds 80 percent warn, 95 percent page"]
+    B3["Snapshot count near the cap<br/>metric FileShareSnapshotCount<br/>greater than 150 of the 200 per share limit"]
+  end
+  subgraph RSV["Recovery Services vault rsv-contoso-westus"]
+    C1["Built-in alerts for all job failures<br/>monitoringSettings.azureMonitorAlertSettings.alertsForAllJobFailures set to Enabled<br/>assessor BKP-11 fails when this is off"]
+  end
+  AG["Action group ag-organization-storage<br/>storage team mailbox, SMS on Sev 1, ITSM webhook"]
+  SEV1["Sev 1 page - data is not protected or not syncing<br/>A1, A3, C1"]
+  SEV2["Sev 2 next business day - degradation<br/>A2, A4, B1, B2"]
+  SEV3["Sev 3 ticket - cost and lifecycle<br/>A5, A6, B3"]
+  G1["Gotcha - Storage Sync Service metrics arrive every 15 to 20 min.<br/>Never set a frequency of evaluation below 30 min or the rule fires falsely."]
+  G2["Gotcha - a dimension filter is by name. Rename a registered server or a<br/>server endpoint and the rule silently stops watching it."]
+  G3["Gotcha - recommended alerts ship with these thresholds fixed.<br/>Only the action group and recipients are chosen during setup."]
+  A1 --> SEV1
+  A3 --> SEV1
+  C1 --> SEV1
+  A2 --> SEV2
+  A4 --> SEV2
+  B1 --> SEV2
+  B2 --> SEV2
+  A5 --> SEV3
+  A6 --> SEV3
+  B3 --> SEV3
+  SEV1 -->|"phone and mail"| AG
+  SEV2 -->|"mail and ticket"| AG
+  SEV3 -->|"ticket only"| AG
+  G1 -.->|"applies to every rule above"| SSS
+  G2 -.->|"re-point the rule after any rename"| SSS
+  G3 -.->|"customise after creation if noisy"| SSS

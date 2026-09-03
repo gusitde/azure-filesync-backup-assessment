@@ -1,0 +1,102 @@
+%% The private-path resource graph - every Azure object between a Contoso file server and a share, how they reference each other, and the real limits on each
+%% Source: codex/blueprint-azure-files-private-endpoint.md steps 1 to 4 and the sizing table; codex/blueprint-azure-file-sync-private-path.md step 3; Microsoft Learn - What is a private endpoint (sub-resources file and Afs, approval states, ASG 50 IP configurations), Azure Storage firewall rules and network access (400 IP rules, 400 virtual network rules, Microsoft.Storage and Microsoft.Storage.Global), ExpressRoute circuits and peering (4000 IPv4 prefixes, 10000 with Premium)
+erDiagram
+  ER_CIRCUIT ||--|| ER_PRIVATE_PEERING : "one BGP session pair, redundant"
+  ER_CIRCUIT ||--o| ER_MICROSOFT_PEERING : "not enabled in Contoso design"
+  ER_PRIVATE_PEERING ||--o{ ER_CONNECTION : "connection object per gateway"
+  ER_CONNECTION ||--|| ER_GATEWAY : "terminates on"
+  ER_GATEWAY ||--|| HUB_VNET : "lives in GatewaySubnet"
+  HUB_VNET ||--|| PEERING_HUB_TO_SPOKE : "allowGatewayTransit true"
+  SPOKE_VNET ||--|| PEERING_SPOKE_TO_HUB : "useRemoteGateways true"
+  PEERING_HUB_TO_SPOKE ||--|| PEERING_SPOKE_TO_HUB : "both halves or no transit"
+  SPOKE_VNET ||--|| PE_SUBNET : "contains"
+  PE_SUBNET ||--o{ PE_FILE : "hosts"
+  PE_SUBNET ||--o{ PE_AFS : "hosts"
+  PE_FILE ||--|| NIC_FILE : "one read-only NIC created by the platform"
+  PE_AFS ||--|| NIC_AFS : "one read-only NIC created by the platform"
+  NIC_FILE ||--|| IPCONFIG_FILE : "exactly one IP configuration"
+  NIC_AFS ||--|{ IPCONFIG_AFS : "exactly four IP configurations"
+  PE_FILE ||--|| DNS_ZONE_GROUP_FILE : "writes and maintains the A record"
+  PE_AFS ||--|| DNS_ZONE_GROUP_AFS : "writes and maintains four A records"
+  DNS_ZONE_GROUP_FILE }o--|| ZONE_FILE : "references"
+  DNS_ZONE_GROUP_AFS }o--|| ZONE_AFS : "references"
+  ZONE_FILE ||--o{ VNET_LINK : "hub and every spoke that resolves via Azure DNS"
+  ZONE_AFS ||--o{ VNET_LINK : "hub and every spoke that resolves via Azure DNS"
+  ZONE_FILE ||--o{ INFOBLOX_FORWARDER : "forwarded from Contoso grid"
+  ZONE_AFS ||--o{ INFOBLOX_FORWARDER : "forwarded from Contoso grid"
+  INFOBLOX_FORWARDER }o--|| RESOLVER_INBOUND : "target is the static inbound IP"
+  RESOLVER_INBOUND ||--|| HUB_VNET : "delegated subnet in the hub"
+  PE_FILE ||--|| STORAGE_ACCOUNT : "privateLinkServiceConnection sub-resource file"
+  PE_AFS ||--|| STORAGE_SYNC_SERVICE : "privateLinkServiceConnection sub-resource Afs"
+  STORAGE_ACCOUNT ||--|| NETWORK_ACLS : "the public-endpoint firewall"
+  STORAGE_ACCOUNT ||--o{ FILE_SHARE : "home, dept, archive"
+  STORAGE_SYNC_SERVICE ||--o{ SYNC_GROUP : "one Storage Sync Service spans every site"
+  SYNC_GROUP ||--|| CLOUD_ENDPOINT : "points at one file share"
+  CLOUD_ENDPOINT }o--|| FILE_SHARE : "binds the share into the sync group"
+  SYNC_GROUP ||--o{ SERVER_ENDPOINT : "one per registered server path"
+  SERVER_ENDPOINT }o--|| REGISTERED_SERVER : "contoso.local server, agent v20 or later"
+  REGISTERED_SERVER ||--o{ INFOBLOX_FORWARDER : "resolves both zones through the grid"
+  RECOVERY_SERVICES_VAULT ||--o{ FILE_SHARE : "protects, with no network path of its own"
+
+  ER_CIRCUIT {
+    string peering "Azure private peering only"
+    string prefixes "4000 IPv4 by default, 10000 with ExpressRoute Premium"
+    string ip_ranges "any valid address in Contoso WAN, RFC1918 allowed"
+  }
+  ER_MICROSOFT_PEERING {
+    string why_rejected "it is the only thing that would give storage IP rules a NAT public IP to match, and it puts file traffic back on public addresses"
+    string prefixes "200 IPv4, public addresses owned by Contoso or the carrier"
+  }
+  PE_SUBNET {
+    string name "snet-pe-region-01"
+    string size "slash 26, sized for file, Afs, Migrate, Key Vault endpoints"
+    string policy "privateEndpointNetworkPolicies Disabled"
+    string asg_limit "50 IP configurations per application security group if NSG enforcement is turned on"
+  }
+  PE_FILE {
+    string name "pe-account-file"
+    string sub_resource "file"
+    string state "Approved, Pending, Rejected or Disconnected. Only Approved carries traffic"
+    string direction "inbound only. A private endpoint never originates a connection"
+  }
+  PE_AFS {
+    string name "pe-sss-afs"
+    string sub_resource "Afs as the group id in PowerShell and Bicep"
+    string note "the private DNS zone is optional for the endpoint but mandatory for the agent"
+  }
+  IPCONFIG_AFS {
+    string name_1 "sss-name plus management dot region dot afs.azure.net"
+    string name_2 "sss-name plus syncp dot region dot afs.azure.net"
+    string name_3 "sss-name plus syncs dot region dot afs.azure.net"
+    string name_4 "sss-name plus monitoring dot region dot afs.azure.net"
+  }
+  ZONE_FILE {
+    string name "privatelink.file.core.windows.net"
+    string scope "one zone for the whole Contoso estate, in rg-dns-privatezones"
+    string hazard "two zones with the same name linked to one VNet answers NXDOMAIN"
+  }
+  ZONE_AFS {
+    string name "privatelink.afs.azure.net"
+    string records "four A records written by the DNS zone group"
+  }
+  NETWORK_ACLS {
+    string default_action "Deny"
+    string bypass "AzureServices, required by Microsoft.StorageSync and by Azure Backup"
+    string public_network_access "Enabled. Setting it to Disabled also kills the trusted-services path"
+    string ip_rules "up to 400 per account, admin egress only"
+    string vnet_rules "up to 400 per account, each needs Microsoft.Storage or Microsoft.Storage.Global on the subnet"
+  }
+  STORAGE_ACCOUNT {
+    string kind "StorageV2. Private endpoints exist only on GPv2"
+    string redundancy "ZRS or GRS, never RA-GRS"
+    string shared_key "allowSharedKeyAccess true while Azure Backup protects any share"
+  }
+  STORAGE_SYNC_SERVICE {
+    string incoming_traffic_policy "AllowAllTraffic or AllowVirtualNetworksOnly. There is no service-endpoint option"
+    string blast_radius "the policy is service-wide, so it moves every sync group and every Contoso site at once"
+    string identity "useIdentity true once Set-AzStorageSyncServiceIdentity has run"
+  }
+  RECOVERY_SERVICES_VAULT {
+    string sub_resources "AzureBackup and AzureSiteRecovery"
+    string azure_files "not applicable. Azure Files backup is stored in the local storage account"
+  }

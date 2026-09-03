@@ -1,0 +1,37 @@
+%% Who owns what in a Contoso file and server migration - Microsoft, Contoso, and the consulting team - Contoso profile
+%% Source: codex/blueprint-azure-migrate-private-link-landing.md (Azure creates the project, Key Vault, usage storage and vault endpoints; the cache account is Contoso's), codex/playbook-azure-migrate-private-link-cache-storage.md, Microsoft Learn "Migrate data into Azure File Sync with Azure Data Box" (Data Box handling and erasure), "How to use DFS-N with Azure Files"
+flowchart TB
+  subgraph MS["Microsoft owns and operates"]
+    MS1["Azure Migrate project internals - Key Vault, usage storage account,<br/>Recovery Services vault, their private endpoints and the privatelink zones<br/>created in the project resource group at key generation"]
+    MS2["The trusted-services leg: Storage Sync Service to storage account.<br/>It rides the Microsoft network and cannot be moved onto ExpressRoute"]
+    MS3["Data Box appliance, carrier logistics, datacenter ingest,<br/>CRC verification and NIST SP 800-88 Revision 1 erasure after upload"]
+    MS4["Platform durability of the storage account and the vault"]
+  end
+  subgraph CO["Contoso owns"]
+    CO1["ExpressRoute circuit, hub and spoke VNets, the private-endpoint subnet<br/>with room for the up to 15 addresses a Migrate project needs"]
+    CO2["Infoblox grid - contoso.local and the conditional forwarders for every privatelink zone<br/>to the Azure DNS Private Resolver inbound endpoint"]
+    CO3["AD DS - computer accounts, SPNs, the PDC emulator the takeover is run against,<br/>Kerberos AES-256, and the groups that hold share-level RBAC"]
+    CO4["DFS-N namespace servers and the namespace itself<br/>plus the registry backup for a stand-alone root-consolidated namespace"]
+    CO5["Source file servers, the freeze window, and the user communication"]
+    CO6["The Migrate cache storage account, its blob private endpoint,<br/>and the vault identity role assignments Contributor plus Storage Blob Data Contributor"]
+    CO7["Target storage accounts, file shares, Recovery Services vault per region,<br/>share soft delete and the backup policy that runs through the wave"]
+    CO8["Approval of every private endpoint connection - an endpoint created without rights sits Pending"]
+  end
+  subgraph CN["Consulting team owns"]
+    CN1["The share-to-storage-account mapping table and the wave list,<br/>with size, item count, owner and records-retention class per share"]
+    CN2["Tool selection per share and the recorded reason - File Sync, Data Box,<br/>Storage Mover or RoboCopy - never one tool declared for the whole estate"]
+    CN3["Gate definitions and their oracle - what output proves the gate passed"]
+    CN4["Measuring the catch-up pass so the downtime estimate is a measurement, not a guess"]
+    CN5["The rollback rehearsal, run once before the first production wave"]
+    CN6["Codex blueprint, playbook and runbook entries plus the evidence bundle<br/>attached to the change record"]
+  end
+  CN1 -->|"handed to Contoso ops as the wave sheet"| CO5
+  CN2 -->|"drives what Contoso must provision"| CO7
+  CN3 -->|"Contoso validator signs the gate, the owner never signs their own"| CO5
+  CN5 -->|"proves the AD rollback path before it is needed"| CO3
+  CO6 -->|"selected in Replicate Target settings only after the endpoint is Approved"| MS1
+  CO2 -->|"resolves the FQDNs Azure published"| MS1
+  MS3 -->|"first-level folder name becomes the Azure file share name"| CO7
+  MS2 -->|"requires Contoso to keep bypass AzureServices on the account"| CO7
+  SPLIT["The split that surprises people: Azure Migrate creates its own Key Vault, usage storage account and vault,<br/>but NOT the cache storage account. If nobody is assigned that account, replication is blocked<br/>at Target settings with no error message on the Azure side."]
+  CO6 -.-> SPLIT

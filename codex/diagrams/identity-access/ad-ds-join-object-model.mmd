@@ -1,0 +1,75 @@
+%% AD DS domain join of an Azure Files storage account - the objects created and how they reference each other - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md (Microsoft Learn: Enable AD DS authentication for Azure Files; Assign share-level permissions; Update the password of your storage account identity in AD DS)
+erDiagram
+  ORG_AD_DS ||--o{ AD_COMPUTER_OBJECT : "holds in OU=AzureFiles,OU=Servers,DC=contoso,DC=local"
+  ORG_AD_DS ||--o{ AD_GROUP : "holds"
+  AD_COMPUTER_OBJECT ||--|| STORAGE_ACCOUNT : "represents over SMB"
+  AD_COMPUTER_OBJECT }o--|| KERBEROS_KEY : "password is the kerb key value"
+  STORAGE_ACCOUNT ||--o{ KERBEROS_KEY : "issues kerb1 and kerb2"
+  STORAGE_ACCOUNT ||--|| AD_PROPERTIES : "stores as activeDirectoryProperties"
+  STORAGE_ACCOUNT ||--o{ FILE_SHARE : "contains, one identity source for all shares"
+  FILE_SHARE ||--o{ SHARE_ROLE_ASSIGNMENT : "scoped at fileshares level"
+  ENTRA_GROUP ||--o{ SHARE_ROLE_ASSIGNMENT : "is the principal"
+  AD_GROUP ||--|| ENTRA_GROUP : "Entra Connect Sync or Cloud Sync"
+  FILE_SHARE ||--o{ NTFS_ACL : "root, directory and file DACLs"
+  AD_GROUP ||--o{ NTFS_ACL : "SID appears in the Kerberos ticket"
+
+  ORG_AD_DS {
+    string dnsRoot "contoso.local"
+    string forestName "contoso.local"
+    guid domainGuid "from Get-ADDomain ObjectGUID"
+    sid domainSid "S-1-5-21-..."
+  }
+  AD_COMPUTER_OBJECT {
+    string samAccountName "no trailing dollar sign, 15 chars or less for NetBIOS safety"
+    string objectClass "ComputerAccount default, ServiceLogonAccount alternative"
+    string servicePrincipalName "cifs/stmtyfiles01.file.core.windows.net"
+    string supportedEncryptionTypes "msDS-SupportedEncryptionTypes set to AES256"
+    string passwordPolicy "OU must disable expiry or the password is rotated before max age"
+    sid objectSid "becomes azureStorageSid on the account"
+  }
+  KERBEROS_KEY {
+    string keyName "kerb1 or kerb2"
+    string usage "setup only, never a control-plane or data-plane credential"
+    string rotation "Update-AzStorageAccountADObjectPassword -RotateToKerbKey"
+  }
+  STORAGE_ACCOUNT {
+    string name "stmtyfiles01, StorageV2, ZRS or GRS, large file shares"
+    string directoryServiceOptions "AD for AD DS, AADKERB for Entra Kerberos, AADDS, or None"
+    string defaultSharePermission "None at initialization"
+    bool allowSharedKeyAccess "stays true while Azure Backup protects the shares"
+    string kerberosTicketEncryption "AES-256"
+  }
+  AD_PROPERTIES {
+    string domainName "contoso.local"
+    string netBiosDomainName "CONTOSO"
+    string forestName "contoso.local"
+    guid domainGuid "must match the live domain"
+    sid domainSid "must match the live domain"
+    sid azureStorageSid "SID of the AD computer object"
+    string samAccountName "without the trailing dollar sign"
+    string accountType "Computer or User"
+  }
+  FILE_SHARE {
+    string name "home, dept, archive, scans, gis"
+    string mountPath "backslash backslash stmtyfiles01.file.core.windows.net backslash share"
+  }
+  SHARE_ROLE_ASSIGNMENT {
+    string roleDefinitionName "Storage File Data SMB Share Reader, Contributor or Elevated Contributor"
+    string scope "/subscriptions/../storageAccounts/stmtyfiles01/fileServices/default/fileshares/dept"
+    string principalType "Group - SEC-13 fails on principalType User"
+    string propagation "usually effective within 30 minutes"
+  }
+  ENTRA_GROUP {
+    string source "synced from contoso.local, groups created only in Entra ID do not work"
+    string note "only the group must sync, member users need not"
+  }
+  AD_GROUP {
+    string scope "domain local or global group used on the old file server"
+  }
+  NTFS_ACL {
+    string rootDefault "BUILTIN Administrators OI CI F, BUILTIN Users RX, BUILTIN Users OI CI IO GR GE, NT AUTHORITY Authenticated Users OI CI M, NT AUTHORITY SYSTEM OI CI F and F, CREATOR OWNER OI CI IO F"
+    string builtinAdmins "BUILTIN Administrators is empty on an Azure file share and nobody can be added to it - there is no hosting server"
+    string carriedBy "File Sync, Robocopy or AzCopy preserve the DACLs"
+    string enforcement "SIDs are read from the Kerberos ticket, non-synced SIDs still enforce under AD DS"
+  }

@@ -1,0 +1,57 @@
+[
+ {
+  "subscription": "Contoso-Prod",
+  "storageAccount": "stcontosofiles01",
+  "share": "home-drives",
+  "azureFileSync": true,
+  "protected": false,
+  "vault": null,
+  "policy": null,
+  "protectionState": null,
+  "lastBackupStatus": null
+ },
+ {
+  "subscription": "Contoso-Prod",
+  "storageAccount": "stcontosofiles01",
+  "share": "dept-shares",
+  "azureFileSync": true,
+  "protected": true,
+  "vault": "rsv-contoso-westus2",
+  "policy": "DailyPolicy",
+  "protectionState": "Protected",
+  "lastBackupStatus": "Healthy"
+ },
+ {
+  "subscription": "Contoso-Prod",
+  "storageAccount": "stcontosofiles01",
+  "share": "archive",
+  "azureFileSync": true,
+  "protected": false,
+  "vault": null,
+  "policy": null,
+  "protectionState": null,
+  "lastBackupStatus": null
+ },
+ {
+  "subscription": "Contoso-Prod",
+  "storageAccount": "stcontosofiles01",
+  "share": "scans",
+  "azureFileSync": false,
+  "protected": false,
+  "vault": null,
+  "policy": null,
+  "protectionState": null,
+  "lastBackupStatus": null
+ },
+ {
+  "subscription": "Contoso-Prod",
+  "storageAccount": "stcontosobackup02",
+  "share": "gis",
+  "azureFileSync": false,
+  "protected": true,
+  "vault": "rsv-contoso-westus2",
+  "policy": "DailyPolicy",
+  "protectionState": "ProtectionStopped",
+  "lastBackupStatus": "Unhealthy"
+ }
+]

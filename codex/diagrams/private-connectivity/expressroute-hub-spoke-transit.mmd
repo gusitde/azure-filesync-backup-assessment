@@ -1,0 +1,56 @@
+%% ExpressRoute private peering to a private endpoint - the transit path, the two peering flags and the routing that carries it - Contoso profile
+%% Source: codex/blueprint-azure-files-private-endpoint.md steps 1 and 6; Microsoft Learn - Azure Virtual Network peering (gateway transit), Azure virtual network traffic routing (longest prefix match), ExpressRoute FastPath (gateway SKUs, Private Link limited GA)
+flowchart LR
+  subgraph Contoso["Contoso network"]
+    SRV["Registered File Sync servers and direct SMB clients"]
+    IB[("Infoblox grid - authoritative contoso.local, IPAM, privatelink conditional forwarders")]
+    FW["Contoso edge firewall - permit TCP 445 and TCP 443 to the spoke prefix, no NAT on private peering"]
+  end
+
+  subgraph ER["ExpressRoute circuit"]
+    PP["Private peering - BGP. Contoso prefixes advertised in, hub and spoke prefixes advertised out"]
+    MP["Microsoft peering - NOT used in this design. It is the only thing that would give storage IP rules a NAT public IP to match"]
+  end
+
+  subgraph Hub["Hub VNet 10.50.0.0/16"]
+    GWS["GatewaySubnet"]
+    GW["ExpressRoute gateway. FastPath needs ErGw3AZ, Ultra Performance or ErGwScale with 10 scale units"]
+    RES["DNS Private Resolver inbound endpoint - UDP and TCP 53"]
+  end
+
+  subgraph Peer["Peering pair - both flags or no transit"]
+    P1["Hub side allowGatewayTransit = true"]
+    P2["Spoke side useRemoteGateways = true. The spoke must have no gateway of its own"]
+  end
+
+  subgraph Spoke["Private-endpoint spoke VNet 10.51.0.0/16"]
+    PESUB["snet-pe-region-01, /26, privateEndpointNetworkPolicies Disabled"]
+    PEF["pe-account-file - 1 NIC IP - sub-resource file"]
+    PEA["pe-sss-afs - 4 NIC IPs - sub-resource Afs"]
+    RT["Effective routes - a /32 system route per endpoint NIC wins by longest prefix match. A 0.0.0.0/0 UDR does NOT override it"]
+  end
+
+  SA[("Storage account file endpoint - Microsoft backbone, no public hop")]
+  SSS["Storage Sync Service - four regional afs names"]
+  FP{"ExpressRoute Direct plus FastPath Private Link enrollment?"}
+
+  SRV -->|"SMB 445 to the file endpoint"| FW
+  SRV -->|"HTTPS 443 FileREST, sync control, recalls"| FW
+  SRV -->|"DNS queries for the share and the four afs names"| IB
+  IB -->|"forward privatelink.file.core.windows.net and privatelink.afs.azure.net, forward-only"| RES
+  FW --> PP
+  PP --> GW
+  GW --- GWS
+  GW --> FP
+  FP -->|"no - Contoso default. Endpoint traffic traverses the gateway, which is fine at Contoso bandwidth"| P1
+  FP -->|"yes - limited GA, enrollment plus 4 to 6 weeks, storage supported, spoke endpoints supported"| PESUB
+  P1 --> P2 --> PESUB
+  PESUB --> PEF
+  PESUB --> PEA
+  PESUB --- RT
+  PEF --> SA
+  PEA --> SSS
+  MP -.->|"the alternative Contoso rejected - it would put file traffic on public IPs behind NAT"| SA
+
+  NOUDR["Constraint - you cannot write a UDR with next hop VirtualNetworkGateway pointing at an ExpressRoute gateway. Force-tunnel designs must use a virtual appliance instead"]
+  NOUDR -.-> RT

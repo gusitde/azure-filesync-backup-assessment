@@ -1,0 +1,62 @@
+[
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.RecoveryServices/vaults/rsv-contoso-westus2/backupFabrics/Azure/protectionContainers/StorageContainer;Storage;rg-contoso-files;stcontosofiles01/protectedItems/AzureFileShare;dept-shares",
+  "name": "AzureFileShare;dept-shares",
+  "properties": {
+   "friendlyName": "dept-shares",
+   "protectedItemType": "AzureFileShareProtectedItem",
+   "backupManagementType": "AzureStorage",
+   "workloadType": "AzureFileShare",
+   "containerName": "StorageContainer;Storage;rg-contoso-files;stcontosofiles01",
+   "sourceResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01",
+   "policyId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.RecoveryServices/vaults/rsv-contoso-westus2/backupPolicies/DailyPolicy",
+   "policyName": "DailyPolicy",
+   "lastBackupStatus": "Healthy",
+   "lastBackupTime": "2026-09-03T02:05:00Z",
+   "protectionStatus": "Healthy",
+   "protectionState": "Protected",
+   "extendedInfo": {
+    "oldestRecoveryPoint": "2026-08-27T02:05:00Z",
+    "recoveryPointCount": 7,
+    "policyState": "Consistent"
+   },
+   "isScheduledForDeferredDelete": false
+  }
+ },
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.RecoveryServices/vaults/rsv-contoso-westus2/backupFabrics/Azure/protectionContainers/StorageContainer;Storage;rg-contoso-files;stcontosobackup02/protectedItems/AzureFileShare;gis",
+  "name": "AzureFileShare;gis",
+  "properties": {
+   "friendlyName": "gis",
+   "protectedItemType": "AzureFileShareProtectedItem",
+   "backupManagementType": "AzureStorage",
+   "workloadType": "AzureFileShare",
+   "containerName": "StorageContainer;Storage;rg-contoso-files;stcontosobackup02",
+   "sourceResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosobackup02",
+   "policyId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.RecoveryServices/vaults/rsv-contoso-westus2/backupPolicies/DailyPolicy",
+   "policyName": "DailyPolicy",
+   "lastBackupStatus": "Unhealthy",
+   "lastBackupTime": "2026-08-30T02:05:00Z",
+   "protectionStatus": "Unhealthy",
+   "protectionState": "ProtectionStopped",
+   "extendedInfo": {
+    "oldestRecoveryPoint": "2026-08-23T02:05:00Z",
+    "recoveryPointCount": 7
+   },
+   "isScheduledForDeferredDelete": false
+  }
+ },
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.RecoveryServices/vaults/rsv-contoso-westus2/backupFabrics/Azure/protectionContainers/IaasVMContainer;iaasvmcontainerv2;rg-contoso-files;vm-fs01/protectedItems/VM;iaasvmcontainerv2;rg-contoso-files;vm-fs01",
+  "name": "VM;iaasvmcontainerv2;rg-contoso-files;vm-fs01",
+  "properties": {
+   "friendlyName": "vm-fs01",
+   "protectedItemType": "Microsoft.Compute/virtualMachines",
+   "backupManagementType": "AzureIaasVM",
+   "workloadType": "VM",
+   "policyName": "DefaultPolicy",
+   "protectionState": "Protected",
+   "lastBackupStatus": "Completed"
+  }
+ }
+]

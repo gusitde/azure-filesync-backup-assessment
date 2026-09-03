@@ -1,0 +1,50 @@
+%% Who owns each object in the resolution chain - the three boundaries that decide who can fix a DNS incident, and the two things nobody at Contoso can change
+%% Source: codex/blueprint-azure-dns-for-private-endpoints.md steps 1 to 6 and its artifact registry, codex/playbook-deploy-dns-private-resolver-and-forwarders.md preconditions, codex/runbook-private-endpoint-name-resolution-and-reachability.md; Microsoft Learn "Azure Private Endpoint DNS integration" (the platform writes the records, the public CNAME is service-owned)
+flowchart TB
+  subgraph MS["Microsoft - not configurable, not negotiable, and the source of most surprises"]
+    M1["The public CNAME. Any storage account name under file.core.windows.net resolves to the same name under privatelink.file.core.windows.net, whether or not a private endpoint exists. It cannot be removed, and it is what makes a privatelink-only forwarder sufficient"]
+    M2["Azure DNS at 168.63.129.16. Reachable from a VNet, rejected as a forwarding-rule destination, and the only thing the inbound endpoint talks to"]
+    M3["The DNS zone group automation. The platform writes, rewrites and deletes the A records. A human writing them by hand is taking ownership Microsoft was already carrying"]
+    M4["The four Storage Sync Service host names and the five siterecovery names. Their count and shape are fixed by the service, not chosen by Contoso"]
+  end
+
+  subgraph NET["Contoso ITD network and Infoblox team - changes go through an Infoblox change ticket"]
+    N1["The grid, authoritative contoso.local, and normal recursion for public names"]
+    N2["One forward-only zone per privatelink name, pointed at the inbound address"]
+    N3["IPAM reservations in network view Azure with the azure-resource-id attribute, and the Azure discovery job"]
+    N4["Contoso edge firewall rules that let UDP and TCP 53 reach the inbound endpoint and let the outbound subnet reach the grid members"]
+  end
+
+  subgraph CLOUD["Contoso cloud platform team - changes go through the landing-zone repository"]
+    P1["The resolver, both delegated subnets, the static inbound address and the ruleset"]
+    P2["The seven private DNS zones and their links to the hub and every spoke"]
+    P3["The contoso.local forwarding rule and its two targets"]
+    P4["Every private endpoint and its DNS zone group, including reconciling the zones Azure Migrate creates in its own resource group"]
+    P5["The spoke VNet DNS setting. Choosing custom DNS servers here silently disables P2 for that VNet"]
+  end
+
+  subgraph CONS["Consultant - reads, proves and hands back. No standing write access"]
+    K1["Reader on the subscriptions in scope. The assessment never needs a data role or an account key"]
+    K2["The oracle - the resolution walk-through table, one row per client and per name, with the expected answer"]
+    K3["The assessor run with -PrivateTrafficRequired, and the before and after reports filed with the change record"]
+    K4["The codex entries that survive the engagement, so the next change is executed by Contoso rather than re-discovered"]
+  end
+
+  N1 -->|"recursion returns the public CNAME that Microsoft owns"| M1
+  N2 -->|"forward-only on port 53 over ExpressRoute private peering"| P1
+  P1 -->|"the inbound endpoint answers from the zones linked to its own VNet"| P2
+  P2 -->|"records written by the zone group, never by a person"| M3
+  P4 --> P2
+  P3 --> N1
+  N4 -.->|"a correct DNS design still fails here if 53 is blocked in either direction"| P1
+  N3 -.->|"an address that is not in IPAM is an address that gets reused"| P4
+  M4 --> P4
+  K2 -.->|"tests the boundary, does not cross it"| N2
+  K2 -.->|"tests the boundary, does not cross it"| P2
+  K3 --> K4
+
+  HAND{"Who fixes a name that answers with a public address?"}
+  HAND -->|"the privatelink name resolves privately when queried directly against the inbound address"| NET
+  HAND -->|"the privatelink name returns NXDOMAIN against the inbound address"| CLOUD
+  HAND -->|"the name resolves privately but the port is closed"| N4
+  HAND -.->|"never the answer"| SELF["A hosts file entry or a hand-made A record. It moves the fault out of both teams' sight and leaves no owner at all"]

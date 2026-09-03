@@ -1,0 +1,71 @@
+%% How share-level Azure RBAC and NTFS ACLs combine on an Azure file share, and every path that overrides them - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md and codex/blueprint-azure-files-secure-storage-account.md (Microsoft Learn: Configure directory and file-level permissions - How Azure RBAC and Windows ACLs work together; Assign share-level permissions)
+flowchart TB
+  START["Contoso user presents a Kerberos service ticket for cifs/stmtyfiles01.file.core.windows.net"]
+
+  subgraph G1["Gate 1 - share level, evaluated against the Entra ID identity"]
+    G1Q{"Does a SID in the ticket map to an Entra principal with a share-scoped role ?"}
+    RNONE["No role and defaultSharePermission None"]
+    RREAD["Storage File Data SMB Share Reader - like a share ACL of read"]
+    RCONT["Storage File Data SMB Share Contributor - read, write, delete"]
+    RELEV["Storage File Data SMB Share Elevated Contributor - read, write, delete, modify ACLs, like a share ACL of change"]
+  end
+
+  subgraph G2["Gate 2 - directory and file level, evaluated against the AD SID in the same ticket"]
+    NNONE["NTFS None"]
+    NREAD["NTFS Read or Read and Execute or List Folder"]
+    NWRITE["NTFS Write"]
+    NMOD["NTFS Modify"]
+    NFULL["NTFS Full"]
+  end
+
+  subgraph EFF["Effective access - the MOST RESTRICTIVE of the two gates wins"]
+    E1["Access denied - no share role means the DACL is never consulted"]
+    E2["Access denied - share role held but the DACL grants nothing"]
+    E3["Read only - Contributor at share level, Read on the object"]
+    E4["Read and Write - Contributor at share level, Write on the object"]
+    E5["Read, Write, Delete - Contributor at share level, Modify or Full on the object"]
+    E6["Read only - Reader at share level even when the DACL says Full"]
+    E7["Read, Write, Delete plus apply permissions to anyone's folders and files - Elevated Contributor with NTFS Full"]
+  end
+
+  subgraph OVR["Paths that step around the two gates - audit these"]
+    O1["Storage File Data Privileged Contributor - read, write, delete and modify ACLs by OVERRIDING the existing ACLs"]
+    O2["Storage File Data Privileged Reader - read by overriding the existing ACLs"]
+    O3["Storage File Data SMB Admin - share access plus takeOwnership, admin runs takeown then edits the DACL, no account key needed"]
+    O4["Mount with the storage account key - immediate full access to every file, no ownership step, NTLMv2 not Kerberos"]
+  end
+
+  DEF["Default share-level permission on the account applies to ALL authenticated identities in the AD DS the account is joined to"]
+  DEFRULE["When a default AND an explicit assignment both exist the HIGHER of the two wins - the opposite of the gate rule"]
+  NONSYNC["Non-synced principals - computer accounts, sMSA, gMSA - have no Entra object, so a default share-level permission is the only way to give them share access"]
+
+  START --> G1Q
+  G1Q -->|"no match"| RNONE
+  G1Q -->|"read only group"| RREAD
+  G1Q -->|"standard department group"| RCONT
+  G1Q -->|"data owner group"| RELEV
+
+  RNONE --> E1
+  RREAD --> NFULL
+  RCONT --> NNONE
+  RCONT --> NREAD
+  RCONT --> NWRITE
+  RCONT --> NMOD
+  RELEV --> NFULL
+
+  NNONE --> E2
+  NREAD --> E3
+  NWRITE --> E4
+  NMOD --> E5
+  NFULL --> E6
+  NFULL --> E7
+
+  DEF --> DEFRULE
+  DEF --> NONSYNC
+  DEFRULE -.->|"raises Gate 1 for every authenticated identity"| G1Q
+
+  O1 -.->|"bypasses Gate 2"| EFF
+  O2 -.->|"bypasses Gate 2"| EFF
+  O3 -.->|"reaches Gate 2 by taking ownership first"| EFF
+  O4 -.->|"bypasses both gates - the reason SEC-04 stays open only for File Sync and Backup"| EFF

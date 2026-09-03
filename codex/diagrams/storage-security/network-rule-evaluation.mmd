@@ -1,0 +1,49 @@
+%% Storage account network rules - the order in which one request is actually decided - Contoso profile
+%% Source: codex/blueprint-azure-files-secure-storage-account.md and codex/playbook-harden-existing-storage-account.md, verified on Microsoft Learn (Azure Storage firewall rules and network access; Guidelines and limitations for the storage firewall; Trusted Azure services for Azure Storage network security)
+flowchart TB
+  REQ["Request for stmryfiles01 - SMB 445 or FileREST 443"]
+  PLANE{"Control plane or data plane"}
+  CP["Control plane at management.azure.com - firewall rules do NOT apply here - only Azure RBAC and the CanNotDelete lock do"]
+  DP["Data plane at stmryfiles01.file.core.windows.net - network rules are enforced on all protocols, REST and SMB alike"]
+  PE{"Arrived on the file private endpoint in the spoke"}
+  PEOK["ALLOW - Contoso servers and workstations over ExpressRoute private peering - the public endpoint rule set is never consulted"]
+  PNA{"publicNetworkAccess"}
+  DIS["Disabled - shuts the public endpoint and takes precedence over defaultAction - never set on a File Sync account, this is runbook class 2"]
+  TS{"Caller is a trusted Azure service and bypass includes AzureServices"}
+  TSOK["ALLOW - trusted service access takes the highest precedence over every other network restriction - Microsoft.StorageSync change enumeration and Azure Backup jobs ride this leg"]
+  RI{"Caller matches a resourceAccessRule"}
+  RIOK["ALLOW - resource instance rule pinned to the Storage Sync Service resource id plus the tenant id - same tenant only - the instance own RBAC then decides what it may do"]
+  VN{"Source subnet has a Microsoft.Storage service endpoint and a matching virtualNetworkRule"}
+  VNOK["ALLOW - up to 400 VNet rules - Microsoft.Storage reaches the same region, Microsoft.Storage.Global any region, only one endpoint type per subnet"]
+  IP{"Source public IPv4 matches an ipRule"}
+  IPOK["ALLOW - up to 400 IP rules - Contoso baseline lists admin egress addresses only"]
+  IPLIM["An IP rule cannot help this caller - RFC1918 ranges are rejected, /31 and /32 prefixes are unsupported, IPv4 only, and an IP rule has no effect on a caller inside the same Azure region"]
+  DEF{"networkAcls.defaultAction"}
+  DENY["DENY 403 - Contoso target state for everything not matched above"]
+  ALLOWSTATE["Allow - the pre-hardening state the assessor reports as SEC-03"]
+  AUTHZ["A network pass is not access - the request still faces Kerberos AD DS plus share-level RBAC plus NTFS ACLs, or the account key while allowSharedKeyAccess stays true"]
+  REQ --> PLANE
+  PLANE -->|ARM operation such as File Shares Delete| CP
+  PLANE -->|share and file IO| DP
+  DP --> PE
+  PE -->|yes| PEOK
+  PE -->|no, public endpoint| PNA
+  PNA -->|Disabled| DIS
+  PNA -->|Enabled| TS
+  TS -->|yes| TSOK
+  TS -->|no| RI
+  RI -->|yes| RIOK
+  RI -->|no| VN
+  VN -->|yes| VNOK
+  VN -->|no| IP
+  IP -->|yes| IPOK
+  IP -->|no| IPLIM
+  IPLIM --> DEF
+  DEF -->|Deny| DENY
+  DEF -->|Allow| ALLOWSTATE
+  PEOK --> AUTHZ
+  TSOK --> AUTHZ
+  RIOK --> AUTHZ
+  VNOK --> AUTHZ
+  IPOK --> AUTHZ
+  ALLOWSTATE --> AUTHZ

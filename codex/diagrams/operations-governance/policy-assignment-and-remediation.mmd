@@ -1,0 +1,44 @@
+%% Azure Policy for Contoso landing zone - assignment, evaluation timing and the remediation task, including the branch where remediation fails
+%% Source: Microsoft Learn "Remediate non-compliant resources" for managed identity, roleDefinitionIds and remediation task parameters, and "Get policy compliance data" for evaluation triggers and timings, both read 2026-09-03; the built-in GUIDs are the set listed in codex/blueprint-azure-files-secure-storage-account.md and codex/blueprint-azure-file-sync-private-path.md
+sequenceDiagram
+  autonumber
+  participant PLT as Platform team - eng-netops
+  participant POL as Azure Policy service
+  participant MI as Assignment managed identity
+  participant ARM as Azure Resource Manager
+  participant RES as Contoso storage accounts and Storage Sync Services
+  participant KIT as Assessment kit oracle
+
+  Note over PLT,RES: The initiative assigned at Contoso landing-zone management group.<br/>Deny or Audit - 34c877ad network access, 6edd7eda private link, c9d007d0 trusted services,<br/>404c3081 secure transfer, fe83a0eb minimum TLS, e5612cea SMB encryption in transit,<br/>044985bb key expiry, 92a89a79 cross-tenant replication.<br/>Audit ONLY with an exemption for File Sync and Backup accounts - b2982f36 public network<br/>access and 8c6a50c6 shared key. Denying either one breaks sync or breaks backup.<br/>DeployIfNotExists and Modify for File Sync - b35dddd9 private endpoints, 0e07b2e9 disable public access.
+  PLT->>POL: create the assignment at the management group scope
+  POL->>MI: create the system-assigned identity for the deploy and modify effects
+  alt assignment made in the portal
+    POL->>MI: grant the roleDefinitionIds carried by the built-in definitions automatically
+  else assignment made from the Bicep pipeline or an SDK
+    Note over PLT,MI: Nothing is granted for you. The roles in roleDefinitionIds<br/>must be assigned to the identity by hand or every remediation fails later.
+    PLT->>MI: az role assignment create for each roleDefinitionIds entry at the scope
+  end
+  POL-->>PLT: assignment reaches the scope after about 5 minutes, then evaluation starts
+
+  Note over POL,RES: Two different clocks. A NEW or updated resource is evaluated on the write and<br/>its result appears in about 15 minutes. EXISTING resources are re-evaluated on the<br/>standard cycle once every 24 hours, and being marked non-compliant changes nothing<br/>on its own - deployIfNotExists and modify only touch existing resources through a remediation task.
+  POL->>RES: standard evaluation cycle
+  RES-->>POL: three storage accounts non-compliant on 6edd7eda, one Storage Sync Service on b35dddd9
+  PLT->>POL: az policy state trigger-scan for the resource group, to avoid waiting for the daily cycle
+  PLT->>POL: az policy remediation create for the deployIfNotExists assignment
+  Note over PLT,POL: Remediation task settings that matter at Contoso scale.<br/>ResourceCount defaults to 500 and caps at 50000.<br/>ParallelDeploymentCount is 1 to 30 and defaults to 10.<br/>FailureThreshold defaults to 100 percent, so a task never fails fast unless you lower it.
+  POL->>MI: run the embedded template as the assignment identity
+  MI->>ARM: deploy the private endpoint and the DNS zone group
+
+  alt the identity holds every role in roleDefinitionIds
+    ARM->>RES: private endpoint created and approved
+    RES-->>POL: compliance state Compliant on the next evaluation
+    PLT->>KIT: re-export and re-assess the estate
+    KIT-->>PLT: no SEC-03, no SEC-05, no AFS-11, no AFS-14 - the policy did what the blueprint says
+  else a role is missing, or the target sits outside the assignment scope
+    ARM-->>MI: deployment fails with an authorization error
+    MI-->>POL: remediation resource marked failed, the resource stays non-compliant
+    Note over PLT,ARM: This is the common failure. The private DNS zone lives in rg-dns-privatezones,<br/>outside the assignment scope, so Private DNS Zone Contributor was never granted there.
+    PLT->>MI: grant the missing role at the zone resource group
+    PLT->>POL: create the remediation task again
+  end
+  Note over PLT,KIT: Governance closure. A policy that only audits is a report, not a control.<br/>Record which definitions are Deny, which are Audit, and which accounts carry an<br/>exemption with its expiry date - an exemption with no expiry is undeclared drift.

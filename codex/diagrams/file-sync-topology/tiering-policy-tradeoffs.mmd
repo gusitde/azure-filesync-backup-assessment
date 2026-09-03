@@ -1,0 +1,19 @@
+%% Trade-off map for the cloud tiering settings Contoso has to choose per server endpoint - local capacity kept against recall egress
+%% Source: Microsoft Learn "Choose Azure File Sync cloud tiering policies" (start at 10 to 20 percent free space with the date policy disabled, 99 percent during migration, aggressive settings increase recalls), "Create an Azure File Sync server endpoint" (initial download options), "Understand Azure File Sync cloud tiering" (proactive recall costs egress), read 2026-09-03; docs/RULES.md TIER-01, TIER-04, TIER-05, TIER-06
+quadrantChart
+  title Cloud tiering settings - how much stays on Contoso server against how much is recalled from Azure Files
+  x-axis "Almost nothing kept on the server" --> "Whole data set kept on the server"
+  y-axis "Low recall egress and transactions" --> "High recall egress and transactions"
+  quadrant-1 "Warm cache bought with egress - justify it per site"
+  quadrant-2 "Danger zone - cache too small for the working set, users wait on every open"
+  quadrant-3 "Target zone - small local footprint, few recalls"
+  quadrant-4 "Buy disk instead of egress - the only shape that supports server-side backup"
+  "Free space 20 percent, date policy off": [0.62, 0.24]
+  "Free space 50 percent, date policy off": [0.4, 0.42]
+  "Free space 20 percent plus date policy 15 days": [0.5, 0.4]
+  "Free space 99 percent, migration window only": [0.06, 0.86]
+  "Free space under 10 percent, rule TIER-04": [0.78, 0.62]
+  "Branch endpoint, initial download NamespaceOnly": [0.16, 0.34]
+  "Proactive recall DownloadNewAndModifiedFiles": [0.8, 0.8]
+  "Cloud tiering off, full copy on the server": [0.95, 0.08]
+  "Tiering off plus initial download AvoidTieredFiles": [0.97, 0.16]

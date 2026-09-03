@@ -1,0 +1,18 @@
+%% Identity source trade-off for one storage account - what it costs to stand up against what it can enforce - Contoso profile
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md and docs/RULES.md SEC-07 (Microsoft Learn: On-premises AD DS authentication for Azure Files; Microsoft Entra Kerberos authentication for Azure Files; Assign share-level permissions; Overview of Azure Files identity-based authentication options)
+%%{init: {"themeVariables": {"quadrantPointFill": "#1f3864", "quadrantPointTextFill": "#1a1a1a", "quadrantTitleFill": "#1a1a1a", "quadrantXAxisTextFill": "#1a1a1a", "quadrantYAxisTextFill": "#1a1a1a", "quadrantInternalBorderStrokeFill": "#888888", "quadrantExternalBorderStrokeFill": "#555555"}}}%%
+quadrantChart
+  title One identity source per storage account - it applies to every share in it, so this choice is made once per account
+  x-axis Few prerequisites on clients and infrastructure --> Heavy prerequisites on clients and infrastructure
+  y-axis Access decided outside Azure --> Access decided in Azure per identity and per share
+  quadrant-1 Azure enforces per identity after real prerequisite work
+  quadrant-2 Azure enforces with light prerequisites
+  quadrant-3 Enforcement stays on the Windows Server or on the account key
+  quadrant-4 Heavy prerequisites and still nothing enforced in Azure
+  AD DS Kerberos with synced groups - Contoso choice for scans and gis: [0.70, 0.90]
+  AD DS Kerberos with a default share-level permission for all authenticated identities: [0.48, 0.42]
+  Entra Kerberos for hybrid identities - Entra joined clients only: [0.64, 0.84]
+  Entra Kerberos for cloud-only identities - no DC at mount time: [0.56, 0.78]
+  Microsoft Entra Domain Services - a second managed domain beside contoso.local: [0.90, 0.72]
+  No identity source with File Sync in front - servers enforce the NTFS ACLs: [0.14, 0.18]
+  Storage account key over NTLMv2 - what SEC-07 flags today: [0.06, 0.06]

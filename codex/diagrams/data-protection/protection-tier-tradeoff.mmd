@@ -1,0 +1,20 @@
+%% Trade-off map for Contoso protection tiers - recovery speed against how far each copy sits from the storage account blast radius
+%% Source: codex/blueprint-azure-files-backup-protection.md steps 3 and 7, docs/RULES.md BKP-04; Microsoft Learn "About Azure Files backup", "Support matrix for Azure Files backup", "Secure by default with soft delete" (operational backups of Azure Files not covered), "Azure File Sync deployment guide" (self-service restore) (read 2026-09-03)
+quadrantChart
+    title Contoso recovery options - speed against isolation from the source account
+    x-axis Shares the storage account blast radius --> Independent of the storage account
+    y-axis Hours to days of RTO --> Seconds to minutes of RTO
+    quadrant-1 Fast and isolated - nothing sits here, so combine tiers
+    quadrant-2 Fast but dies with the account - first line only
+    quadrant-3 Slow and dies with the account - never rely on this alone
+    quadrant-4 Isolated but slow - the last line that must always exist
+    "VSS previous versions on the server volume": [0.06, 0.95]
+    "Share snapshots every 4 h for 30 days": [0.20, 0.86]
+    "Item level restore of 99 items or fewer": [0.24, 0.78]
+    "Share soft delete undelete within 14 days": [0.14, 0.62]
+    "Full share restore to original location": [0.28, 0.55]
+    "Vault standard tier in an LRS or ZRS vault": [0.66, 0.34]
+    "Vault standard tier in a GRS vault with CRR": [0.90, 0.22]
+    "Cross region restore into East US": [0.95, 0.10]
+    "Storage account recovery inside 14 days": [0.34, 0.16]
+    "Server side agent backup of a tiered endpoint": [0.44, 0.05]

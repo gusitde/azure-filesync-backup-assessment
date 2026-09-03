@@ -1,0 +1,39 @@
+%% Azure Migrate appliance over Private Link - project creation, DNS proof, registration and first replication, with the name-resolution failure branch - Contoso profile
+%% Source: codex/blueprint-azure-migrate-private-link-landing.md and codex/playbook-azure-migrate-private-link-cache-storage.md; Microsoft Learn "Migrate servers to Azure by using Private Link" and "Troubleshoot network connectivity issues - Azure Migrate"
+sequenceDiagram
+  autonumber
+  participant OPS as eng-netops
+  participant PORTAL as Azure portal or REST
+  participant PROJ as Migrate project plus Key Vault, usage storage and Recovery Services vault
+  participant ZONE as privatelink zones in the project resource group
+  participant IB as Infoblox grid
+  participant RES as DNS Private Resolver inbound endpoint in the hub
+  participant APP as Migrate appliance on Contoso network
+  participant CACHE as Contoso cache storage account
+  OPS->>PORTAL: create the project with connectivity method Private endpoint
+  Note over OPS,PORTAL: PowerShell cannot create a private-link project, and the connectivity method is immutable afterwards
+  PORTAL->>PROJ: generate the appliance key
+  PROJ->>ZONE: Azure creates Key Vault, the usage storage account and the vault, attaches a private endpoint to each and writes the zones
+  OPS->>PROJ: Download DNS settings from BOTH properties pages
+  PROJ-->>OPS: the FQDN and private IP pairs that are the oracle for this project
+  OPS->>IB: conditional forwarders for the four privatelink zones to the resolver inbound endpoint
+  Note over OPS,IB: forward the privatelink zones only, never all of core.windows.net, and link or merge the Migrate zones rather than duplicating them on the VNet
+  OPS->>CACHE: create the GPv2 cache account with a blob private endpoint, keep bypass AzureServices
+  OPS->>CACHE: grant the vault managed identity Contributor and Storage Blob Data Contributor
+  APP->>IB: resolve every FQDN from the settings file
+  IB->>RES: forwarded query for the privatelink name
+  RES->>ZONE: lookup in the linked zone
+  ZONE-->>APP: A record 10.x.x.x
+  alt every name matches the private IP in the settings file
+    APP->>PROJ: register with the project key over TCP 443 through the project private endpoint
+    PROJ-->>APP: registration complete, discovery starts, no AgentNotConnected
+    APP->>CACHE: replication writes through the blob private endpoint
+    CACHE-->>OPS: Data Bytes In on the endpoint increases - this metric is the closure evidence
+  else a name answers with a public IP or NXDOMAIN
+    APP-->>OPS: AgentNotConnected, ForbiddenToAccessKeyVault, or a 504 while saving the appliance configuration
+    OPS->>IB: add the missing forwarder, or delete the duplicate zone that holds no record
+    OPS->>APP: remove the hosts-file entries left from testing and add proxy bypass rules for every privatelink FQDN
+    Note over OPS,APP: the hosts file is a documented testing-only fallback and must be empty at go-live
+    OPS->>APP: retry the DNS proof, then registration
+  end
+  APP-->>OPS: portal, Entra ID, management.azure.com, aka.ms and download.microsoft.com stay on the public path - no forwarder makes these legs private

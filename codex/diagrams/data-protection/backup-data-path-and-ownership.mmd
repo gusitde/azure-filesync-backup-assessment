@@ -1,0 +1,76 @@
+%% Who owns which part of Contoso backup, and why not one backup byte crosses Contoso network - the answer to the ExpressRoute question
+%% Source: codex/blueprint-azure-files-backup-protection.md section Why ExpressRoute is not involved; Microsoft Learn "About Azure Files backup" (backup and restore flow, change detection), "Support matrix for Azure Files backup" (a private endpoint on the vault does not apply to Azure Files backup), "Configure Azure File Sync network endpoints" (read 2026-09-03)
+flowchart LR
+
+  subgraph ORGNET["Contoso network - contoso.local, Infoblox grid, AD DS"]
+    SRV["Registered file servers<br/>File Sync agent, cloud tiering<br/>VSS self-service restore per volume"]
+    ADM["Backup admin workstation<br/>portal and Az.RecoveryServices"]
+    SECADM["Security admin workstation<br/>owns the Resource Guard subscription"]
+  end
+
+  subgraph EDGE["Private path Contoso already paid for"]
+    ER["ExpressRoute private peering to the hub VNet"]
+    PE1[("privatelink.file.core.windows.net")]
+    PE2[("privatelink.afs.azure.net")]
+  end
+
+  subgraph CUSTAZ["Contoso-owned Azure resources - Contoso configures and is billed for these"]
+    SA[("Storage account stmtyfiles01<br/>StorageV2, ZRS or GRS, large file shares<br/>Deny plus bypass AzureServices")]
+    SHR["File shares home, dept, archive<br/>share soft delete 14 days"]
+    SNAP["Share snapshots<br/>leased by Azure Backup"]
+    RSVRES["Recovery Services vault resource<br/>rsv-contoso-westus<br/>settings, policies, MUA association"]
+    RG["Resource Guard<br/>second subscription"]
+    AG["Action group and Log Analytics workspace"]
+  end
+
+  subgraph MSFT["Microsoft-operated - Contoso has no network route into any of this"]
+    BKPSVC["Azure Backup service and scheduler"]
+    META["Metadata and catalog store<br/>holds snapshot URLs, not data"]
+    VLTSTORE[("Vault storage - vault-standard recovery points")]
+    GEO[("GRS replica in East US<br/>reachable only by cross-region restore")]
+    SSS["Storage Sync Service"]
+  end
+
+  subgraph DELIVERY["the delivery team"]
+    ASSESS["Assessor rules BKP-01 to BKP-19<br/>coverage, tiering, vault posture, alerts"]
+    EVID["Restore-test evidence and the change record<br/>no standing credentials in Contoso tenant"]
+  end
+
+  SRV -->|"SMB 445 and HTTPS 443 over private peering"| ER
+  ER --> PE1 --> SA
+  ER --> PE2 --> SSS
+  ADM -->|"HTTPS 443 to management.azure.com - CONTROL PLANE ONLY"| RSVRES
+  SECADM -->|"HTTPS 443 - grants Backup MUA Operator just in time"| RG
+  RSVRES -.->|"MUA association"| RG
+
+  BKPSVC ==>|"Files REST over the Microsoft backbone, trusted-services bypass, key-based data plane"| SA
+  SA ==>|"snapshot created through the Files API"| SNAP
+  SNAP ==>|"changed blocks of the last daily snapshot"| VLTSTORE
+  BKPSVC --> META
+  VLTSTORE ==>|"Microsoft-managed geo replication"| GEO
+  VLTSTORE ==>|"full share restore to an alternate location"| SHR
+  SNAP ==>|"item level or full share restore"| SHR
+  SA --- SHR
+  RSVRES -.->|"management plane binding to the service"| BKPSVC
+  RSVRES --> AG
+  BKPSVC -->|"list of restored paths"| SSS
+  SSS -->|"change detection, in parallel with the restore"| PE2
+
+  ASSESS -.->|"reads the export, writes findings"| RSVRES
+  ASSESS -.-> SA
+  EVID -.-> RSVRES
+
+  NOTE1["Every thick edge above is Azure-internal.<br/>Snapshot creation, the vault transfer and the geo replication<br/>run inside Microsoft's network between Microsoft-operated services<br/>and Contoso-owned Azure resources. None of it enters Contoso WAN,<br/>so none of it consumes ExpressRoute bandwidth."]
+  NOTE2["This is why a private endpoint on the Recovery Services vault<br/>is not the answer to the ExpressRoute question - it is documented<br/>as not applying to Azure Files backup. There is no leg to make private,<br/>because there is no leg on Contoso network."]
+  NOTE3["The only Contoso-carried legs are the thin ones.<br/>Admin traffic to ARM is control plane, and it is the ONE leg that<br/>cannot be made private on the customer side without Microsoft peering.<br/>Restored BYTES reach the servers through the File Sync private path<br/>that is already in place - not through a backup-specific route."]
+
+  MSFT -.- NOTE1
+  RSVRES -.- NOTE2
+  ADM -.- NOTE3
+
+  classDef msft fill:#e8eef7,stroke:#356,stroke-width:1px
+  classDef cust fill:#eef5e8,stroke:#575,stroke-width:1px
+  classDef note fill:#fbf6e2,stroke:#a85,stroke-width:1px
+  class BKPSVC,META,VLTSTORE,GEO,SSS msft
+  class SA,SHR,SNAP,RSVRES,RG,AG cust
+  class NOTE1,NOTE2,NOTE3 note

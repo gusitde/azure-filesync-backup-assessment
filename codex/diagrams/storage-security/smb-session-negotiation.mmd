@@ -1,0 +1,34 @@
+%% Mounting a Contoso share over SMB - every check the hardened account makes, in order, and where it returns STATUS_ACCESS_DENIED
+%% Source: codex/playbook-enable-identity-based-auth-ad-ds.md and codex/blueprint-azure-files-secure-storage-account.md, verified on Microsoft Learn (SMB file shares in Azure Files - SMB security settings, encryption in transit, Windows client support table)
+sequenceDiagram
+  autonumber
+  participant WS as Contoso workstation joined to contoso.local
+  participant IB as Infoblox grid
+  participant RES as DNS Private Resolver inbound endpoint
+  participant DC as contoso.local domain controller
+  participant PE as Private endpoint for the file sub-resource
+  participant SA as stmryfiles01 file service
+  WS->>IB: stmryfiles01.file.core.windows.net ?
+  IB->>RES: privatelink.file.core.windows.net conditional forwarder
+  RES-->>IB: A 10.x.x.x
+  IB-->>WS: A 10.x.x.x
+  WS->>PE: TCP 445 over ExpressRoute private peering
+  PE->>SA: SMB negotiate, client offers its highest dialect and cipher list
+  Note over SA: versions is SMB3.0 and SMB3.1.1 - SMB 2.1 was dropped, and it is refused anyway whenever Require Encryption in Transit for SMB is enabled
+  SA-->>WS: dialect SMB 3.1.1 accepted
+  WS->>DC: TGS request for the cifs SPN of stmryfiles01.file.core.windows.net
+  DC-->>WS: Kerberos service ticket, AES-256
+  WS->>SA: session setup with the Kerberos ticket
+  Note over SA: authenticationMethods is Kerberos only - removing NTLMv2 is what stops account-key mounts, and kerberosTicketEncryption is AES-256 with RC4-HMAC removed
+  SA->>SA: channel cipher negotiated against AES-128-GCM and AES-256-GCM
+  alt client dialect, auth method and cipher are all permitted
+    SA-->>WS: session established, encryption in transit satisfied
+    WS->>SA: tree connect to dept-shares
+    SA->>SA: share-level RBAC - Storage File Data SMB Share Contributor held by the AD-synced group
+    SA->>SA: NTFS ACL evaluated on the path, as on any Contoso file server
+    SA-->>WS: share mounted, all IO stays on the private endpoint
+  else legacy client - Windows Server 2019 capped at AES-128-GCM, or an SMB 2.1 client, or a script still mounting with the account key
+    SA-->>WS: STATUS_ACCESS_DENIED at session setup
+    Note over WS,SA: the SMB security settings are checked when the session is established, not at first read - AES-256-GCM needs Windows Server 2022 or Windows 11, and a key-based mount needs NTLMv2 which is gone
+    WS->>SA: retry after the fallback - restore NTLMv2 and Kerberos, move the client to an AD identity, then re-harden
+  end

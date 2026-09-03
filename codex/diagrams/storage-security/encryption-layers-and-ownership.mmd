@@ -1,0 +1,53 @@
+%% Encryption on a Contoso file share - the four layers, who owns each key, and which legs are Contoso's to configure
+%% Source: codex/blueprint-azure-files-secure-storage-account.md step 4 and codex/playbook-deploy-secure-storage-account-and-share.md step 4; Microsoft Learn - Enable infrastructure encryption for double encryption of data; Customer-managed keys for account encryption; SMB file shares in Azure Files (encryption in transit, Require Encryption in Transit for SMB, channel ciphers); Require secure transfer
+flowchart TB
+  subgraph MSFT["Microsoft owns and operates - no Contoso lever exists here"]
+    SSE["Service-level SSE. 256-bit AES beneath the file system, FIPS 140-2 validated, ALWAYS on, cannot be disabled and does not need a client-side key to read the share"]
+    INFRA["Infrastructure-level encryption. A SECOND 256-bit AES pass with a different algorithm and a separate Microsoft-managed key. Even under CMK this second key stays Microsoft-managed"]
+    FABRIC["The private-endpoint fabric and the Microsoft backbone that carries the request from the endpoint NIC to the file service"]
+    TERM["The SMB and TLS terminators inside the file service, which is where the negotiated cipher is actually enforced"]
+  end
+
+  subgraph ORG["Contoso owns - every one of these is a decision on the change record"]
+    KEYSRC["encryption keySource. Microsoft.Storage is the baseline. Microsoft.Keyvault only if Contoso policy mandates CMK - assessor SEC-14 is informational either way"]
+    DAY0["requireInfrastructureEncryption. CREATION TIME ONLY on a StorageV2 or premium account - it cannot be added to a live account and cannot be removed, so it is a day-0 decision, not a hardening step"]
+    AKV["If CMK - the Key Vault or Managed HSM with soft delete AND purge protection on, an RSA or RSA-HSM key of 2048, 3072 or 4096 bits, and the user-assigned identity holding get, wrapKey and unwrapKey"]
+    TLS["minimumTlsVersion TLS1_2 and supportsHttpsTrafficOnly true. Note the scope change - Secure transfer required now governs REST and HTTPS traffic ONLY"]
+    EIT["Require Encryption in Transit for SMB. Portal-created accounts have it on. Accounts created by CLI, PowerShell or the FileREST API leave it Not selected, which is exactly how Contoso account was built"]
+    CIPH["protocolSettings smb channelEncryption. Contoso baseline keeps AES-128-GCM and AES-256-GCM and drops AES-128-CCM, which caps the account at SMB 3.1.1 and SMB 3.0 clients that can do GCM"]
+    KTIX["kerberosTicketEncryption AES-256, RC4-HMAC removed. This has to match Set-ADComputer KerberosEncryptionType AES256 on the contoso.local object or mounts fail with 1396"]
+    FLEET["The client fleet itself. A Windows Server 2019 file server caps at AES-128-GCM, so selecting AES-256-GCM alone locks it out - the fleet, not Azure, sets the ceiling"]
+    ER["The ExpressRoute private peering circuit and the Infoblox forwarder that keep the ciphertext off the internet in the first place"]
+  end
+
+  subgraph CONSULT["Consultant scope - the delivery team and the assessment kit"]
+    RULES["The rule catalog that turns each setting above into a checkable finding, SEC-01 through SEC-15"]
+    ORACLE["The oracle - re-export and re-assess, expect zero SEC and DATA findings other than SEC-04 shared key documented and SEC-14 platform-managed keys"]
+    ORDER["The retrofit order - transport settings before SMB profile, SMB profile before keys, private path before the firewall"]
+  end
+
+  ATREST["Data at rest on the share - encrypted twice when infrastructure encryption was chosen at creation, once otherwise"]
+  SMBLEG["Leg 1 - direct SMB mount, TCP 445 over ExpressRoute private peering to the file private endpoint. Confidentiality comes from SMB channel encryption, not TLS"]
+  RESTLEG["Leg 2 - FileREST from the File Sync agent and from the portal browser, TCP 443, TLS 1.2 minimum"]
+  MSLEG["Leg 3 - Storage Sync Service to the storage account and Azure Backup to the same account. Microsoft initiates it on the trusted-services path. It is encrypted, but Contoso cannot route it, inspect it or move it onto the circuit"]
+
+  SSE --> ATREST
+  INFRA --> ATREST
+  KEYSRC -->|"wraps the account encryption key"| SSE
+  AKV -->|"unwrap on every read and write"| SSE
+  DAY0 --> INFRA
+  TLS --> RESTLEG
+  EIT --> SMBLEG
+  CIPH --> SMBLEG
+  KTIX --> SMBLEG
+  FLEET -->|"sets the real ceiling"| CIPH
+  ER --> SMBLEG
+  ER --> RESTLEG
+  SMBLEG --> TERM
+  RESTLEG --> TERM
+  TERM --> FABRIC
+  FABRIC --> ATREST
+  MSLEG -.->|"cannot be made private - state it in the report"| ATREST
+  RULES --> ORACLE
+  ORDER --> ORACLE
+  ORACLE -.->|"evidence for the change record"| ORG

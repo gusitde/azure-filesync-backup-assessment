@@ -1,0 +1,20 @@
+%% Retrofit order on a live Contoso account - what goes first, what goes last, and the gate that must pass before the next phase
+%% Source: codex/playbook-harden-existing-storage-account.md (Procedure and Steps) with the gate wording from codex/blueprint-azure-files-secure-storage-account.md
+timeline
+  title Hardening an existing Azure Files account without breaking File Sync or Backup
+  section Phase 0 - evidence
+    Export and assess : assessment.md is the before record : name every client that still mounts with the account key over NTLMv2 : GATE is a stored before-assessment
+  section Phase 1 - non-disruptive settings
+    Transport and durability : minimumTlsVersion TLS1_2 and supportsHttpsTrafficOnly true : allowBlobPublicAccess false and allowCrossTenantReplication false : share soft delete raised to 14 days : largeFileSharesState Enabled which is irreversible and free : diagnostics for fileServices default to Log Analytics, Defender for Storage, tags, CanNotDelete lock : GATE is the next File Sync 9102 event with HResult 0 and the next backup job Completed
+  section Phase 2 - SMB hardening
+    Protocol profile : versions SMB3.0 and SMB3.1.1 : kerberosTicketEncryption AES-256 : channelEncryption AES-128-GCM and AES-256-GCM : keep authenticationMethods NTLMv2 and Kerberos until every key-based mount is gone : enable Require Encryption in Transit for SMB, which CLI-created accounts leave Not selected : GATE is a test mount from a Windows Server 2019 client
+  section Phase 3 - keys
+    Rotate in the safe order : repoint clients to key2 : regenerate key1, which kills every account and service SAS signed with it : repoint clients to the new key1 : regenerate key2 : set keyExpirationPeriodInDays 180, which is only possible once both keys have been rotated at least once : GATE is sync and backup green after the rotation
+  section Phase 4 - private path
+    Prove the private endpoint : Resolve-DnsName returns a 10.x address on EVERY registered server and every direct SMB client : Test-NetConnection on the SMB port succeeds : GATE is private resolution everywhere, no exceptions, before the firewall closes
+  section Phase 5 - firewall lock-down
+    Close the public endpoint : add the resource instance rule for the Storage Sync Service resource id and tenant : add admin egress IP rules : set defaultAction Deny with bypass AzureServices : keep publicNetworkAccess Enabled : GATE within 60 minutes is every server endpoint Healthy, a cloud change enumeration completed and an on-demand backup job Completed
+  section Phase 6 - identity
+    Retire the account key : AD DS join with AzFilesHybrid and AES-256 : share-level RBAC to AD-synced groups : authenticationMethods narrowed to Kerberos : GATE is the Transactions metric split by Authentication showing no AccountKey traffic
+  section Phase 7 - after evidence
+    Re-export and re-assess : expected residue is SEC-04 shared key documented and SEC-14 platform-managed keys : GATE is both assessments filed with the change record

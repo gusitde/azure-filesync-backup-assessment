@@ -1,0 +1,56 @@
+%% Lifecycle of ONE A record in a privatelink zone - the only supported state, the four drift states that look identical from the client, and how each one is left
+%% Source: Microsoft Learn "Azure Private Endpoint DNS integration" (zone group behaviour, five zones per group, one zone per zone name, one zone group per endpoint, records deleted with the endpoint, caution on duplicate and overridden zones); codex/runbook-private-endpoint-name-resolution-and-reachability.md classes 1, 2, 3 and 6
+stateDiagram-v2
+  direction TB
+
+  state "No zone - the name has never resolved privately anywhere" as Absent
+  state "Zone exists and is linked, but holds no record for this account - the client gets NXDOMAIN, never a fallthrough to public DNS" as Empty
+  state "Managed by the DNS zone group - the platform writes and rewrites the record as the endpoint changes. The only supported state" as Managed
+  state "Hand-made A record - created with record-set a add-record because no zone group was attached" as HandMade
+  state "Shadowed - a second zone of the same name is linked to the same VNet and answers first, holding no record" as Shadowed
+  state "Stale - the endpoint was recreated with a new NIC address and the record still carries the old one" as Stale
+  state "Overridden on one host - a hosts file entry on a single server wins over every DNS answer and is invisible to every DNS test" as HostsFile
+  state "Deleted - the endpoint is gone and the zone group removed its records with it" as Deleted
+
+  [*] --> Absent
+  Absent --> Empty : create the privatelink zone and link it to the hub and the spokes
+  Empty --> Managed : attach a DNS zone group on the private endpoint referencing the CENTRAL zone
+  Empty --> HandMade : shortcut taken when the zone lives in another subscription and the operator lacks Private DNS Zone Contributor
+  Absent --> HostsFile : the documented testing-only fallback on the Migrate appliance, kept after testing
+
+  Managed --> Deleted : delete the private endpoint, the zone group deletes its records
+  Managed --> Shadowed : Azure Migrate creates its own zone of the same name in the project resource group and someone links it to the hub
+  Managed --> Stale : endpoint recreated while an intermediate resolver or client still caches the previous answer
+  HandMade --> Stale : endpoint recreated, nothing rewrites a hand-made record
+  Shadowed --> Managed : delete or unlink the duplicate zone, then re-verify from a Contoso server
+  Stale --> Managed : fix the record through the zone group, Clear-DnsClientCache on the client, purge the Infoblox cache for that zone
+  HandMade --> Managed : attach the zone group and delete the hand-made record, in that order
+  HostsFile --> Managed : add the Infoblox forward zone, remove the hosts entry, retry registration
+  Deleted --> Absent : release the Infoblox IPAM reservation for the address as well
+
+  note right of Managed
+    Constraints of the zone group.
+    Five private DNS zones per group at most.
+    One zone per zone NAME per group.
+    One zone group per private endpoint - you
+    cannot add a second one.
+    Deleting the endpoint deletes the records.
+  end note
+
+  note right of Shadowed
+    Two zones with the same name linked to one
+    VNet do not merge. Microsoft's guidance is a
+    single zone per name for the whole estate,
+    linked to hub and spokes. Merging afterwards
+    is a manual record-by-record operation.
+  end note
+
+  note right of HostsFile
+    The anti-pattern that hides all of the above.
+    Resolve-DnsName on that server still shows the
+    public chain while the application reaches the
+    private address, so the DNS evidence and the
+    application behaviour disagree. Closure rule in
+    the runbook - no hosts entry and no hand-made
+    record survives the incident.
+  end note

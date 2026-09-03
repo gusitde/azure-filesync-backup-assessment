@@ -1,0 +1,71 @@
+[
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/syncGroups/sg-home/cloudEndpoints/ce-home",
+  "name": "ce-home",
+  "type": "Microsoft.StorageSync/storageSyncServices/syncGroups/cloudEndpoints",
+  "properties": {
+   "storageAccountResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01",
+   "azureFileShareName": "home-drives",
+   "storageAccountTenantId": "tenant",
+   "partnershipId": "p",
+   "friendlyName": "home-drives",
+   "backupEnabled": "false",
+   "provisioningState": "Succeeded",
+   "lastWorkflowId": "",
+   "lastOperationName": "",
+   "changeEnumerationStatus": {
+    "lastCompletedEnumeration": {
+     "startedTimestamp": "2026-09-03T02:00:00Z",
+     "completedTimestamp": "2026-09-03T02:00:00Z",
+     "namespaceFilesCount": 100000,
+     "namespaceDirectoriesCount": 8000,
+     "namespaceSizeBytes": 1099511627776,
+     "nextRunTimestamp": "2026-09-04T02:00:00Z"
+    }
+   }
+  }
+ },
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/syncGroups/sg-dept/cloudEndpoints/ce-dept",
+  "name": "ce-dept",
+  "type": "Microsoft.StorageSync/storageSyncServices/syncGroups/cloudEndpoints",
+  "properties": {
+   "storageAccountResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01",
+   "azureFileShareName": "dept-shares",
+   "storageAccountTenantId": "tenant",
+   "partnershipId": "p",
+   "friendlyName": "dept-shares",
+   "backupEnabled": "false",
+   "provisioningState": "Succeeded",
+   "lastWorkflowId": "",
+   "lastOperationName": "",
+   "changeEnumerationStatus": {
+    "lastCompletedEnumeration": {
+     "startedTimestamp": "2026-09-03T02:00:00Z",
+     "completedTimestamp": "2026-09-03T02:00:00Z",
+     "namespaceFilesCount": 100000,
+     "namespaceDirectoriesCount": 8000,
+     "namespaceSizeBytes": 1099511627776,
+     "nextRunTimestamp": "2026-09-04T02:00:00Z"
+    }
+   }
+  }
+ },
+ {
+  "id": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.StorageSync/storageSyncServices/sss-contoso-files/syncGroups/sg-archive/cloudEndpoints/ce-archive",
+  "name": "ce-archive",
+  "type": "Microsoft.StorageSync/storageSyncServices/syncGroups/cloudEndpoints",
+  "properties": {
+   "storageAccountResourceId": "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/rg-contoso-files/providers/Microsoft.Storage/storageAccounts/stcontosofiles01",
+   "azureFileShareName": "archive",
+   "storageAccountTenantId": "tenant",
+   "partnershipId": "p",
+   "friendlyName": "archive",
+   "backupEnabled": "false",
+   "provisioningState": "Succeeded",
+   "lastWorkflowId": "",
+   "lastOperationName": "",
+   "changeEnumerationStatus": {}
+  }
+ }
+]

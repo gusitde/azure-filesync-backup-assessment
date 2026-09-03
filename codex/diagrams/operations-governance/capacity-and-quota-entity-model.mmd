@@ -1,0 +1,96 @@
+%% Capacity and quota model - the objects Contoso operates, how they reference each other, and the ceiling that stops each one
+%% Source: Microsoft Learn "Azure File Sync scale targets" and "Azure Files scale and performance targets" read 2026-09-03 for every hard and soft limit; codex/blueprint-azure-files-backup-protection.md for the vault tier limits; assessor rules DATA-03, DATA-04, DATA-06, TIER-04, AFS-07, AFS-09, AFS-10, AFS-16 in docs/RULES.md
+erDiagram
+  SUBSCRIPTION ||--o{ STORAGE_SYNC_SERVICE : "100 per subscription, hard"
+  SUBSCRIPTION ||--o{ STORAGE_ACCOUNT : "250 per region by default, 500 on request"
+  SUBSCRIPTION ||--o{ RECOVERY_SERVICES_VAULT : "one per region that holds shares"
+  STORAGE_SYNC_SERVICE ||--o{ SYNC_GROUP : "200 per service, hard"
+  STORAGE_SYNC_SERVICE ||--o{ REGISTERED_SERVER : "100 per service, hard"
+  STORAGE_SYNC_SERVICE ||--o{ AFS_PRIVATE_ENDPOINT : "100 per service, hard"
+  SYNC_GROUP ||--|| CLOUD_ENDPOINT : "exactly one, hard"
+  SYNC_GROUP ||--o{ SERVER_ENDPOINT : "100 per sync group, hard"
+  REGISTERED_SERVER ||--o{ SERVER_ENDPOINT : "30 per server, hard"
+  SERVER_ENDPOINT }o--|| SERVER_VOLUME : "one data volume, never the system volume"
+  CLOUD_ENDPOINT }o--|| FILE_SHARE : "the share is the sync hub"
+  STORAGE_ACCOUNT ||--o{ FILE_SHARE : "shares share the account IOPS and throughput"
+  FILE_SHARE ||--o{ SHARE_SNAPSHOT : "200 per share, hard, Backup and manual share the cap"
+  RECOVERY_SERVICES_VAULT ||--o{ BACKUP_ITEM : "vault must be in the region of the account"
+  BACKUP_ITEM }o--|| FILE_SHARE : "one protected item per share"
+  BACKUP_ITEM }o--|| BACKUP_POLICY : "AFS-Active-4h-30d-Vault-90d or AFS-Archive-1d-30d-Vault-1y"
+  BACKUP_ITEM ||--o{ SHARE_SNAPSHOT : "scheduled snapshots, leased by Backup"
+
+  SUBSCRIPTION {
+    string name "Contoso landing zone subscription"
+    int storage_sync_services_max "100, hard"
+    int storage_accounts_per_region "250 default, 500 by quota request"
+  }
+  STORAGE_SYNC_SERVICE {
+    string name "sss-contoso-westus"
+    string region_rule "same region as its storage accounts, assessor AFS-16"
+    string traffic_policy "AllowVirtualNetworksOnly after cut-over"
+    int sync_groups_max "200, hard"
+    int registered_servers_max "100, hard"
+    int private_endpoints_max "100, hard"
+  }
+  SYNC_GROUP {
+    string name "one per Azure file share"
+    int cloud_endpoints "exactly 1, hard"
+    int server_endpoints_max "100, hard"
+    string objects_tested "100 million per sync group, soft, aim under 20 to 30 million"
+    string throughput_note "upload 200 objects per second, first enumeration 150 per second"
+  }
+  REGISTERED_SERVER {
+    string hostname "fs01.contoso.local"
+    string os_floor "Windows Server 2016 or later, assessor AFS-07"
+    string agent_floor "v20 or later for managed identity, v22 for the SA and Arc discount"
+    int server_endpoints_max "30, hard"
+  }
+  SERVER_ENDPOINT {
+    string local_path "data volume only, assessor AFS-09"
+    string nesting "no overlapping paths on one server, assessor AFS-10"
+    int volume_free_space_percent "Contoso floor 10 to 20, assessor TIER-04"
+    string tiering_floor "a file must exceed double the cluster size to tier, 8 KiB on a 4 KiB volume"
+  }
+  CLOUD_ENDPOINT {
+    string share_name "home-drives, dept-shares, archive"
+    string change_enumeration "full scan of the share once every 24 h"
+  }
+  STORAGE_ACCOUNT {
+    string kind_sku "StorageV2 HDD pay-as-you-go, ZRS or GRS, never RA-GRS"
+    string capacity_max "5 PiB per account"
+    string iops_max "20000 default, 40000 in select regions including West US"
+    string throughput_max "ingress 3200 MiB per second, egress 6400 MiB per second by default"
+    int vnet_rules_max "400"
+    int ip_rules_max "400"
+    string mgmt_write_limit "10 per second and 1200 per hour, control plane"
+  }
+  FILE_SHARE {
+    string quota "up to 100 TiB with large file shares enabled, assessor DATA-06"
+    string quota_alarm "warn at 80 percent used, page at 95 percent, assessor DATA-03"
+    string max_file_size "4 TiB in Azure Files, 100 GiB soft target for File Sync"
+    string path_limits "2048 characters full path, 255 per component"
+    int soft_delete_days "14 minimum, set by Azure Backup"
+  }
+  SHARE_SNAPSHOT {
+    int per_share_max "200, hard"
+    int quota_watermark "150 triggers assessor DATA-04"
+    string billing "differential, counted in the Data Stored meter"
+  }
+  RECOVERY_SERVICES_VAULT {
+    string name "rsv-contoso-westus"
+    string redundancy "GeoRedundant with cross region restore, fixed before the first item"
+  }
+  BACKUP_POLICY {
+    string snapshot_schedule "every 4 h inside an 8 h window, 6 scheduled backups per day max"
+    string vault_tier_limits "10 TB and 10 million files per share"
+    string retention "snapshots 30 days, vault daily 90, monthly 12, yearly 7"
+  }
+  SERVER_VOLUME {
+    string sizing "hot set plus namespace headroom, see the free space worked example"
+  }
+  AFS_PRIVATE_ENDPOINT {
+    string sub_resource "afs, four private IPs and four FQDNs"
+  }
+  BACKUP_ITEM {
+    string protection_state "Protected with lastBackupStatus Healthy, assessor BKP-02"
+  }

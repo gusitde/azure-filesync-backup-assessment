@@ -1,0 +1,58 @@
+%% How one request is judged - the private endpoint path versus the public endpoint firewall, with the 403 failure branch that a lock-down produces
+%% Source: Microsoft Learn - Azure Storage firewall rules and network access; Networking considerations for Azure Files (portal file browser 403, CallerIpAddress); Trusted Azure services (Microsoft.StorageSync); Back up Azure Files FAQ (Azure Backup uses key-based access); codex/runbook-file-sync-broken-after-network-lockdown.md classes 1, 2 and 4
+sequenceDiagram
+  autonumber
+  participant SRV as Contoso file server
+  participant IB as Infoblox grid
+  participant PE as Private endpoint NIC 10.51.x.x
+  participant SA as Storage account data plane
+  participant FWL as Storage firewall on the public endpoint
+  participant SSS as Storage Sync Service
+  participant BK as Azure Backup
+  participant ADM as Administrator browser
+
+  Note over SRV,SA: Path A - the private path Contoso is paying ExpressRoute for
+  SRV->>IB: account.file.core.windows.net ?
+  IB-->>SRV: CNAME to account.privatelink.file.core.windows.net then A 10.51.x.x
+  SRV->>PE: TCP 445 SMB, or TCP 443 FileREST, over private peering
+  PE->>SA: forwarded on the Microsoft backbone
+  SA-->>SRV: served. The public-endpoint firewall rules were never consulted on this path
+  Note over PE,SA: Authorisation on this path is the approved private-link connection plus Kerberos or the account key. Network rules govern the public endpoint only
+
+  Note over SRV,FWL: Path B - the same request when DNS was never forwarded
+  SRV->>IB: account.file.core.windows.net ?
+  IB-->>SRV: A 52.239.x.x - the public storage cluster, because no privatelink forwarder exists
+  SRV->>FWL: TCP 445 from Contoso public egress IP
+  alt defaultAction is still Allow
+    FWL-->>SRV: served over the internet path. Silent failure - the traffic left the circuit and nobody noticed
+  else defaultAction Deny with no matching IP rule
+    FWL-->>SRV: 403
+    SRV->>SRV: Telemetry 9102 with a non-zero HResult, recall errors 9006, server endpoint turns Error
+    Note over SRV,FWL: Recovery - add the Infoblox forwarder, Clear-DnsClientCache, or temporarily add the egress IP as an IP rule
+  end
+
+  Note over SSS,FWL: Path C - the leg Microsoft initiates and you cannot move
+  SSS->>FWL: cloud change enumeration and cloud endpoint operations against the public endpoint
+  alt bypass contains AzureServices
+    FWL-->>SSS: allowed as a trusted service, resource provider Microsoft.StorageSync
+  else bypass was removed, or publicNetworkAccess was set to Disabled
+    FWL-->>SSS: rejected
+    Note over SSS,FWL: Server sync sessions may keep running while change enumeration silently never completes. Assessor AFS-14 or SEC-05
+  end
+
+  Note over BK,FWL: Path D - Azure Backup for Azure file shares
+  BK->>FWL: snapshot and restore operations on the same storage account
+  alt allowSharedKeyAccess true and bypass AzureServices
+    FWL-->>BK: allowed. The snapshot stays in this storage account - zero bytes cross a network
+  else shared key access disabled
+    FWL-->>BK: rejected. Backup jobs fail even though the network rules are correct
+  end
+
+  Note over ADM,FWL: Path E - the portal file browser
+  ADM->>FWL: direct browser request to the data-plane endpoint with a portal SAS
+  alt the browser egress IP is an IP rule
+    FWL-->>ADM: file list rendered
+  else no IP rule
+    FWL-->>ADM: 403 on the data plane while portal.azure.com itself loads normally
+    Note over ADM,FWL: Confirm the real source with storage resource logs, field CallerIpAddress, not with the address in the error
+  end

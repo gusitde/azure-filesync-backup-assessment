@@ -1,0 +1,17 @@
+%% Secure storage account baseline for Azure file shares - controls and what must stay open - Contoso profile
+%% Source: codex/blueprint-azure-files-secure-storage-account.md (Microsoft Learn: storage network security, SMB security settings, AD DS auth, key management, security baseline)
+flowchart TB
+  subgraph SA[Storage account - StorageV2 - ZRS or GRS - large file shares]
+    NET["Network: publicNetworkAccess Enabled - defaultAction Deny - bypass AzureServices - resource instance rule for the Storage Sync Service - private endpoint file - admin IP rules only"]
+    ID["Identity: AD DS Kerberos AES-256 - share-level RBAC to AD groups - NTFS ACLs - shared key kept for File Sync without MI and for Azure Backup"]
+    ENC["Encryption: TLS 1.2 minimum - HTTPS only - SMB encryption in transit required - SSE platform keys, CMK only by policy"]
+    SMB["SMB: SMB3.0 and SMB3.1.1 - Kerberos - AES-256 tickets - AES-128-GCM and AES-256-GCM channel"]
+    DUR["Durability: share soft delete 14 d - Azure Backup snapshot + vault tiers - CanNotDelete lock"]
+    GOV["Governance: Defender for Storage - key expiration policy 180 d - diagnostics to Log Analytics - tags - Azure Policy guardrails by GUID"]
+  end
+  AFS[Azure File Sync servers] -->|HTTPS 443 through the private endpoint| NET
+  SSS[Storage Sync Service] -->|trusted services path - keep bypass AzureServices| NET
+  BK[Azure Backup] -->|trusted services path - keep key access enabled| NET
+  USR[Direct SMB clients over ExpressRoute] -->|SMB 445 Kerberos through the private endpoint| SMB
+  NEVER["Never on a File Sync account: publicNetworkAccess Disabled - allowSharedKeyAccess false while Backup protects shares - RA-GRS"]
+  NEVER -.->|anti-pattern| SA

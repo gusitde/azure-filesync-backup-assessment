@@ -1,0 +1,43 @@
+%% Moving the file data itself - the four transports, their ports, and the legs that cannot be made private - Contoso profile
+%% Source: Microsoft Learn "Migrate data into Azure File Sync with Azure Data Box", "Migrate to Azure Files using RoboCopy", "Azure Storage Mover agent deployment" (outbound 443 endpoints), codex/blueprint-azure-file-sync-private-path.md
+flowchart LR
+  subgraph Contoso["Contoso network - contoso.local"]
+    SRC[("Source file server<br/>Windows Server 2016 or newer<br/>direct attached storage")]
+    NAS[("NAS or Windows Server 2012 and earlier<br/>File Sync agent cannot be installed")]
+    DBX["Azure Data Box on Contoso LAN<br/>pre-provisioned SMB share account_AzFile"]
+    SMV["Storage Mover agent VM<br/>Hyper-V generation 1 or VMware<br/>8 to 16 GiB RAM, 4 to 8 vCPU"]
+    RC["RoboCopy host<br/>Windows Server 2022 recommended"]
+    AFS["Registered File Sync server<br/>agent v20 or later"]
+    IB[("Infoblox grid<br/>authoritative contoso.local")]
+  end
+  subgraph Edge["Contoso edge"]
+    ER["ExpressRoute private peering<br/>circuit and gateway"]
+    FW["Internet egress<br/>outbound TCP 443 only"]
+  end
+  subgraph Azure["Azure - target region"]
+    PEF["Private endpoint sub-resource file<br/>one private IP"]
+    PEA["Private endpoint sub-resource afs<br/>four private IPs"]
+    SA[("Storage account StorageV2<br/>ZRS or GRS, large file shares<br/>defaultAction Deny plus bypass AzureServices")]
+    SSS["Storage Sync Service"]
+    SMS["Storage Mover cloud service<br/>control plane only, never file data"]
+    ING["Data Box ingestion in the Azure datacenter"]
+  end
+  SRC -->|"SMB 445 - robocopy /COPY:DATSO /DCOPY:DAT /MIR /IT /B"| DBX
+  NAS -->|"SMB 445 read"| SMV
+  SRC -->|"SMB 445 read"| SMV
+  DBX ==>|"offline - carrier shipment, no network path, plan 1 to 2 weeks each way"| ING
+  ING -->|"first-level folder name becomes the Azure file share name"| SA
+  RC -->|"SMB 445 to the mounted share over the private endpoint"| ER
+  AFS -->|"HTTPS 443 FileREST - file data and recalls"| ER
+  AFS -->|"HTTPS 443 - sync control and metadata"| ER
+  ER --> PEF --> SA
+  ER --> PEA --> SSS
+  SMV -->|"HTTPS 443 to region.agentgateway.prd.azsm.azure.com,<br/>evhns-sm-ur-prd-region.servicebus.windows.net, mcr.microsoft.com,<br/>his.arc.azure.com, guestconfiguration.azure.com,<br/>login.microsoftonline.com, pas.windows.net, management.azure.com"| FW
+  FW -.->|"the agent requires unrestricted internet connectivity - this leg cannot be moved onto ExpressRoute"| SMS
+  SMV ==>|"file data goes agent to target storage directly, not through the mover resource"| FW
+  SSS -.->|"change enumeration - trusted services path on the Microsoft network, cannot be moved"| SA
+  IB -.->|"conditional forwarders for privatelink.file.core.windows.net and privatelink.afs.azure.net"| Azure
+  ALT["Agentless Storage Mover for SMB<br/>no agent VM, but requires private connectivity to the source share<br/>and SMB credentials stored in Azure Key Vault"]
+  ALT -.->|"alternative when Contoso policy forbids an appliance with open egress"| SMS
+  NEVER["Not a transport for this migration:<br/>AzCopy sync leaves source deletions on the target,<br/>Storage Explorer loses ACLs,<br/>Data Box Disk does not preserve file metadata,<br/>Data Box copy service does not preserve file fidelity"]
+  NEVER -.->|"anti-pattern"| SA

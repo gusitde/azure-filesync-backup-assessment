@@ -1,0 +1,48 @@
+%% What a registered file server actually resolves before it can sync - the four Storage Sync Service names, the storage account name, and the branch where one forwarder is missing
+%% Source: Microsoft Learn "Configure Azure File Sync network endpoints" (the four host names management, syncp, syncs and monitoring under region.afs.azure.net, their privatelink CNAMEs, group id Afs, incomingTrafficPolicy) and "Configure DNS forwarding for Azure Files" (CNAME then A output, Clear-DnsClientCache, Test-NetConnection); codex/blueprint-azure-file-sync-private-path.md steps 3, 4, 7 and 8
+sequenceDiagram
+  autonumber
+  participant SRV as Contoso file server FS01 on contoso.local
+  participant IB as Infoblox grid member 10.1.10.10
+  participant PUB as Public DNS authoritative for afs.azure.net and core.windows.net
+  participant IN as Resolver inbound endpoint 10.100.20.4
+  participant ZA as Zone privatelink.afs.azure.net
+  participant ZF as Zone privatelink.file.core.windows.net
+  participant SSS as Storage Sync Service private endpoint, four NIC addresses
+  participant SA as Storage account private endpoint, sub-resource file
+
+  Note over SRV,SSS: One private endpoint with group id Afs publishes FOUR host names. All four must answer privately, on every registered server, before the public endpoint may be closed.
+
+  loop once for each of the four names - management, syncp, syncs and monitoring
+    SRV->>IB: A query for ssscontosomanagement.westus.afs.azure.net
+    IB->>PUB: no forward zone matches the public form, recurse
+    PUB-->>IB: CNAME to ssscontosomanagement.westus.privatelink.afs.azure.net
+    alt forward zone for privatelink.afs.azure.net exists and is forward-only
+      IB->>IN: A query for the privatelink name over ExpressRoute on port 53
+      IN->>ZA: the zone is linked to the hub VNet where the inbound endpoint lives
+      ZA-->>IN: A 10.20.4.11 written by the DNS zone group on the endpoint
+      IN-->>IB: A 10.20.4.11
+      IB-->>SRV: CNAME then A 10.20.4.11
+    else forward zone missing for this one zone
+      PUB-->>IB: A record on the public Storage Sync Service front end
+      IB-->>SRV: a public address. Resolve-DnsName looks healthy and the agent still syncs over the internet.
+      Note over SRV,SSS: Set-AzStorageSyncService -IncomingTrafficPolicy AllowVirtualNetworksOnly executed in this state stops sync on every server at once. File Sync has no service-endpoint middle ground - the public endpoint is either enabled or disabled.
+    end
+  end
+
+  Note over SRV,SA: The agent needs the storage account too. Sync control and file data are two different legs to two different endpoints.
+  SRV->>IB: A query for stcontosofiles01.file.core.windows.net
+  IB->>PUB: recurse for the public form
+  PUB-->>IB: CNAME to stcontosofiles01.privatelink.file.core.windows.net
+  IB->>IN: A query for the privatelink name
+  IN->>ZF: linked zone lookup
+  ZF-->>IN: A 10.20.4.20
+  IN-->>IB: A 10.20.4.20
+  IB-->>SRV: CNAME then A 10.20.4.20
+
+  SRV->>SA: HTTPS 443 FileREST for uploads, downloads and recalls
+  SRV->>SSS: HTTPS 443 sync control and metadata
+
+  Note over SRV,SA: Gate before any lock-down. Clear-DnsClientCache, then Resolve-DnsName returns a 10.x address for all five names, Test-NetConnection on 445 and 443 is True, Debug-StorageSyncServer -TestNetworkConnectivity succeeds, and the next Telemetry event 9102 carries HResult 0. Run it on EVERY registered server, not on one.
+
+  Note over SSS,SA: The leg you cannot move. The Storage Sync Service calls the storage account itself for change enumeration and cloud endpoint operations. Microsoft initiates it, it never touches Contoso DNS or ExpressRoute, and it survives only because the account keeps bypass AzureServices. Azure Backup for Azure Files is the same shape.

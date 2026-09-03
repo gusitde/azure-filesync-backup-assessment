@@ -1,0 +1,32 @@
+%% Hybrid DNS for private endpoints - three resolution flows - Contoso profile
+%% Source: codex/blueprint-azure-dns-for-private-endpoints.md (Microsoft Learn: Azure DNS Private Resolver overview; Azure Private Endpoint private DNS zone values)
+sequenceDiagram
+  autonumber
+  participant C as Contoso file server
+  participant IB as Infoblox grid
+  participant PUB as Public DNS
+  participant IN as Resolver inbound endpoint (hub)
+  participant AZ as Azure DNS 168.63.129.16
+  participant Z as privatelink.file.core.windows.net
+  participant VM as Azure VM (spoke)
+  participant OUT as Resolver outbound endpoint + ruleset
+  Note over C,Z: Flow 1 - on-premises client resolves an Azure file share
+  C->>IB: account.file.core.windows.net ?
+  IB->>PUB: account.file.core.windows.net ?
+  PUB-->>IB: CNAME account.privatelink.file.core.windows.net
+  IB->>IN: account.privatelink.file.core.windows.net ? (conditional forwarder)
+  IN->>AZ: query
+  AZ->>Z: lookup A record (zone linked to hub)
+  Z-->>IN: A 10.x.x.x
+  IN-->>IB: A 10.x.x.x
+  IB-->>C: A 10.x.x.x then SMB 445 / HTTPS 443 over ExpressRoute to the private endpoint
+  Note over VM,Z: Flow 2 - Azure VM resolves the same share
+  VM->>AZ: account.file.core.windows.net ?
+  AZ->>Z: linked zone answers
+  Z-->>VM: A 10.x.x.x
+  Note over VM,IB: Flow 3 - Azure VM resolves a Contoso AD name
+  VM->>AZ: dc01.contoso.local ?
+  AZ->>OUT: ruleset rule contoso.local. matches
+  OUT->>IB: dc01.contoso.local ? (UDP/TCP 53 over ExpressRoute)
+  IB-->>OUT: A 10.1.x.x
+  OUT-->>VM: A 10.1.x.x
