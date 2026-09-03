@@ -30,6 +30,16 @@ function Get-AzureFailureAdvice {
     if (-not $Message) { return $null }
     $m = $Message
 
+    # the export script uses Az PowerShell, whose sign-in is separate from the Azure CLI's
+    if ($m -match 'Az PowerShell session' -or $m -match 'Connect-AzAccount' -or $m -match 'No Azure context' -or $m -match 'Could not list subscriptions') {
+        return [pscustomobject]@{
+            Cause = 'The Az PowerShell module is not signed in, or its session no longer works.'
+            Why   = 'Az PowerShell keeps its own sign-in, separate from the Azure CLI - az login does not cover it. A context can also exist yet be unusable, for example one that has expired or was created from a raw token; it passes a presence check and then fails on the first real call.'
+            Fix   = @('Connect-AzAccount -Tenant <tenant-id>', '# then confirm it can actually call Azure:', '(Invoke-AzRestMethod -Method GET -Uri "https://management.azure.com/subscriptions?api-version=2022-12-01").StatusCode   # expect 200')
+            Then  = 'Then run the export again. The wizard now does this check for you before starting it.'
+        }
+    }
+
     # a token issued before the access was granted - checked FIRST because the message also
     # contains AuthorizationFailed, and this is the more specific case
     if ($m -match 'recently granted' -or $m -match 'refresh your credentials') {

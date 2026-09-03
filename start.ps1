@@ -477,6 +477,65 @@ from where it stopped rather than starting over."
 docs/AS-BUILT-TEMPLATE.md tells you what to capture as evidence."
 }
 
+function Test-AzPowerShellSession {
+    <# True only if an Az PowerShell context exists AND can actually call Azure. A context that
+       exists but is expired, or was made from a raw token, passes Get-AzContext and then fails
+       on the first real call - which is exactly the crash this guards against. #>
+    try {
+        Import-Module Az.Accounts -ErrorAction Stop | Out-Null
+        $ctx = Get-AzContext -ErrorAction SilentlyContinue
+        if (-not $ctx) { return $false }
+        $r = Invoke-AzRestMethod -Method GET -Uri 'https://management.azure.com/subscriptions?api-version=2022-12-01' -ErrorAction Stop
+        return ($r -and $r.StatusCode -eq 200)
+    } catch { return $false }
+}
+
+function Ensure-AzPowerShellSession {
+    <# The export script uses the Az PowerShell module, which keeps its own sign-in, separate
+       from the Azure CLI session the wizard already has. Establish one, and prove it works. #>
+    param([string]$TenantId, [string]$SubscriptionId)
+    Write-Title 'Az PowerShell session'
+    Write-Explain "The export script uses the Az PowerShell module, which keeps its own sign-in -
+separate from the Azure CLI. Your az login does not cover it."
+
+    if (-not (Get-Module -ListAvailable -Name Az.Accounts)) {
+        Write-Note 'the Az.Accounts module is not installed.'
+        if (-not (Read-YesNo -Question 'Install it now, for the current user only?' -DefaultYes $true)) { return $false }
+        try {
+            Install-Module Az.Accounts -Scope CurrentUser -Force -AllowClobber -Repository PSGallery -ErrorAction Stop
+            Write-Good 'installed'
+        } catch { Write-Bad ('install failed: ' + $_.Exception.Message); return $false }
+    }
+
+    if (Test-AzPowerShellSession) {
+        Write-Good ('Az PowerShell already signed in as ' + (Get-AzContext).Account.Id)
+        return $true
+    }
+
+    Write-Note 'no working Az PowerShell session - missing, expired, or a token-only context.'
+    Write-Explain "A browser window will open. Complete MFA if prompted."
+    Write-Host ''
+    Read-Host '  Press Enter to sign in to Az PowerShell' | Out-Null
+    try {
+        # pass what we already know, so Connect-AzAccount does not stop to ask for a tenant
+        # or a subscription - the only interaction left is MFA, if the broker needs it
+        $conn = @{ ErrorAction = 'Stop' }
+        if ($TenantId)       { $conn['Tenant'] = $TenantId }
+        if ($SubscriptionId) { $conn['Subscription'] = $SubscriptionId }
+        Connect-AzAccount @conn | Out-Null
+    } catch {
+        Write-AfsLogException -ErrorRecord $_ -Context 'Connect-AzAccount failed'
+        Write-Bad ('Connect-AzAccount failed: ' + $_.Exception.Message)
+        return $false
+    }
+    if (-not (Test-AzPowerShellSession)) {
+        Write-Bad 'signed in, but the session still cannot list subscriptions.'
+        return $false
+    }
+    Write-Good ('Az PowerShell signed in as ' + (Get-AzContext).Account.Id)
+    return $true
+}
+
 function Invoke-AssessFlow {
     if (-not (Test-Prerequisites)) { return }
     Write-Title 'Assess an existing estate'
@@ -493,12 +552,35 @@ per-server detail, then produce the findings report."
     if ($choice -eq 0) {
         $acct = Ensure-SignedIn
         if (-not $acct) { return }
+
+        # which subscriptions to export - from the list this account can actually see
+        $subIds = @()
+        $subs = ConvertTo-Array (Invoke-Cli @('account', 'list', '--query', "[?state=='Enabled'].{name:name,id:id}", '-o', 'json') -AllowFailure)
+        if ($subs.Count -gt 0) {
+            Write-Explain ("These are the subscriptions this account can see (" + $subs.Count + ").")
+            $labels = @($subs | ForEach-Object { "$($_.name)   ($($_.id))" }) + @('All of them')
+            $i = Read-Choice -Question 'Which subscription should be exported?' -Options $labels
+            if ($i -lt $subs.Count) { $subIds = @($subs[$i].id) }
+            else { $subIds = @($subs | ForEach-Object { $_.id }) }
+        }
+
+        # the export script needs its own session - establish and prove it before handing off
+        $firstSub = if ($subIds.Count -eq 1) { $subIds[0] } else { $null }
+        if (-not (Ensure-AzPowerShellSession -TenantId $acct.tenantId -SubscriptionId $firstSub)) {
+            Write-Explain 'The export was not started.'
+            return
+        }
+
         Write-Note 'the export makes only read calls - no keys, no SAS, no data.'
         if (-not (Read-YesNo -Question 'Run the export now?' -DefaultYes $true)) { return }
         Push-Location $script:Root
-        try { & (Join-Path $script:Root 'Export-AzFileSyncEnvironment.ps1') }
-        catch { Write-Bad $_.Exception.Message }
-        finally { Pop-Location }
+        try {
+            $exporter = Join-Path $script:Root 'Export-AzFileSyncEnvironment.ps1'
+            if ($subIds.Count) { & $exporter -SubscriptionId $subIds } else { & $exporter }
+        } catch {
+            Write-AfsLogException -ErrorRecord $_ -Context 'export failed'
+            Show-AzureFailure -Message $_.Exception.Message -Context 'The export did not complete.'
+        } finally { Pop-Location }
         return
     }
 

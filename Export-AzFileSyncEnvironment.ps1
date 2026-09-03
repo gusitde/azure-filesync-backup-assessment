@@ -240,9 +240,28 @@ function Get-Prop($Obj, [string]$Name, $Default = $null) {
 }
 
 # -- preflight ----------------------------------------------------------------------------
-$ctx = Get-AzContext
-if (-not $ctx) { throw 'No Azure context. Run Connect-AzAccount first.' }
+$ctx = Get-AzContext -ErrorAction SilentlyContinue
+$sessionHelp = @'
+This script uses the Az PowerShell module, which keeps its OWN sign-in - separate from the
+Azure CLI. Having run "az login" does not sign Az PowerShell in. A context can also exist
+but be unusable (expired, or created from a raw token), which is why it is tested here
+rather than merely detected.
+
+  Fix:  Connect-AzAccount -Tenant <tenant-id>
+        then run this script again
+'@
+if (-not $ctx) { throw ("No Az PowerShell session.`n" + $sessionHelp) }
+
+# Prove the context works before doing anything with it. A context that exists but cannot
+# make a call is the most confusing failure this script can have, and it is caught here.
 $script:ArmBase = Get-ArmBase
+$probe = $null
+try { $probe = Invoke-AzRestMethod -Method GET -Uri "$script:ArmBase/subscriptions?api-version=$($Api.Subscriptions)" -ErrorAction Stop } catch { }
+if (-not $probe -or $probe.StatusCode -ne 200) {
+  $code = if ($probe) { $probe.StatusCode } else { 'no response' }
+  throw ("The Az PowerShell session for $($ctx.Account.Id) exists but cannot call Azure (HTTP $code). It has expired or was never usable.`n" + $sessionHelp)
+}
+
 $runStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 if (-not $OutputPath) { $OutputPath = Join-Path (Get-Location).Path "afs-export-$runStamp" }
 $script:Out = (New-Item -ItemType Directory -Path $OutputPath -Force).FullName
@@ -253,11 +272,11 @@ $subs = @()
 if ($SubscriptionId) {
   foreach ($s in $SubscriptionId) {
     $so = Invoke-ArmGet -Path "/subscriptions/$s" -ApiVersion $Api.Subscriptions -Label "subscription:$s"
-    if ($so) { $subs += $so } else { throw "Subscription $s is not visible to $($ctx.Account.Id)" }
+    if ($so) { $subs += $so } else { throw "Subscription $s is not visible to $($ctx.Account.Id). Check the id, and that this account has Reader on it." }
   }
 } else {
   $all = Invoke-ArmGet -Path '/subscriptions' -ApiVersion $Api.Subscriptions -List -Label 'subscriptions'
-  if ($null -eq $all) { throw 'Could not list subscriptions (see the warning above). Run Connect-AzAccount [-Tenant <id>] and retry, or pass -SubscriptionId explicitly.' }
+  if ($null -eq $all) { throw ("Could not list subscriptions for $($ctx.Account.Id).`n" + $sessionHelp + "`n  Or scope the run explicitly:  -SubscriptionId <id>[,<id>]") }
   $subs = @($all | Where-Object { (Get-Prop $_ 'state' '') -eq 'Enabled' -and (Get-Prop $_ 'tenantId' '') -eq $ctx.Tenant.Id })
 }
 if ($subs.Count -eq 0) { throw 'No subscriptions in scope.' }
