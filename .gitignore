@@ -7,3 +7,7 @@ deploy/deployment-identity.json
 deploy/parameters.json
 deploy/parameters.*.jsonc
 !deploy/parameters.sample.jsonc
+
+# the operator answers - hold account names, domain and OU details
+deploy/inputs.json
+!deploy/inputs.sample.jsonc
