@@ -41,6 +41,20 @@ function Get-AzureFailureAdvice {
         }
     }
 
+    # Conditional Access wants step-up authentication for writes. The CLI prints the exact
+    # command including the claims challenge, so quote it back rather than paraphrasing.
+    if ($m -match 'claims-challenge' -or $m -match 'claims_challenge' -or $m -match '"acrs"' -or $m -match 'authenticate interactively') {
+        $cmd = 'az login --scope "https://management.core.windows.net//.default"'
+        $mm = [regex]::Match($m, 'az login[^\r\n]*--claims-challenge\s+"[^"]+"')
+        if ($mm.Success) { $cmd = $mm.Value }
+        return [pscustomobject]@{
+            Cause = 'Conditional Access requires step-up authentication before this tenant will allow a write.'
+            Why   = 'Your sign-in is valid for reading but does not satisfy the authentication context this tenant demands for creating or changing resources. Re-authenticating with the claims challenge below satisfies it, and also reissues the token so any recent role grant is picked up.'
+            Fix   = @('az logout', $cmd)
+            Then  = 'Then run this again. The command above was produced by the CLI itself, so use it exactly as printed.'
+        }
+    }
+
     # multi-factor authentication is required for every write in this tenant
     if ($m -match 'RequestDisallowedByAzure' -or $m -match 'without authenticating through MFA' -or $m -match 'MFAforAzure') {
         return [pscustomobject]@{
