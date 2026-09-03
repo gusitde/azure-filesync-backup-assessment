@@ -6,6 +6,9 @@ enhancements, and **design and build** it from nothing when there is nothing to 
 including the case where the servers are still on VMware and the customer wants sync and
 backup traffic on their ExpressRoute.
 
+**New here?** Start with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) - dependencies,
+sign-in, and a walk-through of every script.
+
 ## Two doors
 
 | | **Assess** | **Advise** |
