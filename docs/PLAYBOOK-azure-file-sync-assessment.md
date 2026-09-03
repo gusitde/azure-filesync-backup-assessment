@@ -67,7 +67,7 @@ Connect-AzAccount -Tenant <tenant-id>
 ## 3. Assess
 
 ```powershell
-.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-<stamp>.zip -CustomerName "Contoso of X" [-PrivateTrafficRequired] [-IncludeCatalog]
+.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-<stamp>.zip -CustomerName "Contoso" [-PrivateTrafficRequired] [-IncludeCatalog]
 ```
 
 Read `assessment.md` top-down:

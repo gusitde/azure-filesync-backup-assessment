@@ -42,9 +42,9 @@ Connect-AzAccount -Tenant <tenant-id>                   # an account with Reader
 Then, on the analyst side:
 
 ```powershell
-.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-20260903-090000 -CustomerName "Contoso of X"
+.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-20260903-090000 -CustomerName "Contoso"
 # customer requires ExpressRoute / private routing for File Sync traffic:
-.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-20260903-090000.zip -CustomerName "Contoso of X" -PrivateTrafficRequired
+.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-20260903-090000.zip -CustomerName "Contoso" -PrivateTrafficRequired
 .\Assess-AzFileSyncExport.ps1 -ListRules > docs\RULES.md   # the rule catalog
 ```
 
