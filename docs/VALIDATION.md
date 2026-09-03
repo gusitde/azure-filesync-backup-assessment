@@ -16,12 +16,23 @@ Last run: 2026-09-03. Azure CLI 2.84.0, Windows PowerShell 5.1, a live Azure ten
 | Assessor rules and report generation | Synthetic fixture, offline | **108 / 108 checks green** |
 | Deployment and teardown scripts | Parsed, and run end to end in `-WhatIf` against a live subscription | **pass** |
 | Mutating `az` commands | **Not executed** | see limitations |
-| PowerShell `Az.*` cmdlets for modules not installed | **Not executed** | see limitations |
+| Every PowerShell cmdlet and parameter in the codex | Resolved against the real modules | **48 cmdlets, 111 parameter references, 0 invalid** |
 | On-server File Sync cmdlets | **Not executed** | needs a registered server |
 
 ## What execution found that documentation review did not
 
 These are the defects only running the commands could surface.
+
+**0. Two rounds of extraction defects in the checker itself, worth recording because they
+are the reason to distrust a green result you did not interrogate.** The first parameter
+extraction reported three invalid parameters. All three were artifacts: two picked up a
+`-WorkloadType` belonging to an outer cmdlet after a closing parenthesis, and one matched
+`-Connection` inside the quoted value `'<sss>-Connection'`. Fixing the extractor to stop at
+`)` and to blank single-quoted values dropped the count to zero - but the first fix over-
+corrected and blanked the `powershell -Command "..."` wrapper itself, silently reducing the
+corpus from 56 cmdlets to 8 while still reporting a clean pass. A validator that shrinks its
+own input reports success by finding nothing. Both were caught by checking the corpus size
+alongside the result.
 
 **1. A backup gate rule needed an array index, and it is now proven.** The audit had already
 corrected `az backup vault backup-properties show ... --query "properties.storageModelType"`
@@ -77,10 +88,16 @@ No resource could be created, so `storage account create`, `private-endpoint cre
 close this, run the deployment script against a subscription with an MFA-authenticated
 session or a service principal holding Contributor.
 
-**PowerShell cmdlets were partly validated.** `Az.Accounts`, `Az.Resources` and `Az.Storage`
-are installed; `Az.StorageSync`, `Az.RecoveryServices`, `Az.Network`, `Az.PrivateDns` and
-`Az.DnsResolver` are not, so cmdlets and parameters from those modules are not execution
-checked.
+**PowerShell cmdlets are now fully resolved.** `Az.Accounts`, `Az.Resources`, `Az.Storage`,
+`Az.StorageSync` 2.6.0, `Az.RecoveryServices` 7.14.1, `Az.Network` 8.2.0, `Az.PrivateDns` 1.3.0,
+`Az.DnsResolver` 2.0.0 and `Az.Compute` 11.9.0 were installed and every cmdlet the codex names
+was resolved with `Get-Command`, then every `-Parameter` it passes was checked against that
+cmdlet's real parameter set including aliases. **48 cmdlets, 111 parameter references, zero
+invalid.** Five cmdlets remain unresolvable here because they do not ship in a PowerShell
+Gallery module: `Debug-StorageSyncServer` and `Invoke-StorageSyncFileRecall` install with the
+Azure File Sync agent on a registered server; `Join-AzStorageAccount` and
+`Debug-AzStorageAccountAuth` come from AzFilesHybrid, which Microsoft distributes from GitHub;
+`Get-ADComputer` needs RSAT.
 
 **On-server File Sync commands need a registered server.** `Debug-StorageSyncServer`,
 `Get-StorageSyncAgentVersion` and the Telemetry event-log checks require a Windows server
