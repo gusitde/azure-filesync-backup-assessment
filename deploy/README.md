@@ -1,85 +1,156 @@
-# Deploy from a parameter file
+# Two-phase deployment
 
-One script, one parameter file. Everything the deployment creates comes from the parameter
-file, so the same script serves a demo and a production build - only the values change.
+You supply four things. Phase 1 runs once, interactively, as an Entra administrator. Phase 2
+runs unattended, as many times as you like.
 
-```powershell
-# 1. copy the sample and edit the values
-Copy-Item parameters.sample.jsonc parameters.json
-
-# 2. see exactly what would happen, without changing anything
-.\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json -WhatIf
-
-# 3. build it
-.\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json
-
-# 4. remove it again when you are done
-.\Remove-AfsEnvironment.ps1 -ParameterFile .\parameters.json -WhatIf
-.\Remove-AfsEnvironment.ps1 -ParameterFile .\parameters.json
+```
+        inputs.json                    Phase 1                        Phase 2
+   +------------------+      +--------------------------+     +---------------------+
+   | 1 Entra admin    |      | signs in as the admin    |     | signs in AS THE     |
+   | 2 subscription   | ---> | creates the Entra        | --> | IDENTITY, no human  |
+   | 3 AD admin       |      |   deployment identity    |     | builds everything   |
+   | 4 AD basics      |      | grants it RBAC on one RG |     | verifies each step  |
+   +------------------+      | writes deployment-       |     +---------------------+
+                             |   context.json           |
+                             +--------------------------+
 ```
 
-## What it builds
+Phase 1 exists for one reason: most tenants require multi-factor authentication for every ARM
+write, so something human has to sign in once. After that, the identity it creates is not
+subject to that policy and everything else is automatic.
 
-| Section of the parameter file | What appears in Azure |
+---
+
+## What you fill in
+
+Copy `inputs.sample.jsonc` to `inputs.json` and set four things:
+
+| # | Input | Why it is needed |
+|---|---|---|
+| 1 | **Entra global admin** | Phase 1 only. Creates the deployment identity and grants it a role. Never used again. |
+| 2 | **Azure subscription** + a `namePrefix` | Where it is built, and the one naming decision you make - every resource name derives from it |
+| 3 | **AD admin account** | Domain-joins the storage account. Needs only permission to create an object in the OU below - not Domain Admin |
+| 4 | **AD basics** | Domain FQDN, NetBIOS name, the OU for the identity object, and the object type |
+
+Everything else - resource group, storage account, share names, virtual network, subnets, DNS
+zones, resolver, vault, backup policy - is derived. See exactly what you will get, before
+anything runs:
+
+```powershell
+.\Deploy-AfsEnvironment.ps1 -InputFile .\inputs.json -ShowResolved
+```
+
+`namePrefix: contoso` in `eastus` produces `rg-contoso-filesync`, `stcontosofs01`,
+`sss-contoso-filesync`, `vnet-contoso-filesync`, `dnspr-contoso-eastus`, `rsv-contoso-eastus`.
+Override any of them in the `overrides` section if your naming standard differs.
+
+---
+
+## Phase 1 - once
+
+```powershell
+.\Phase1-New-DeploymentIdentity.ps1 -InputFile .\inputs.json
+```
+
+A browser opens; sign in as the administrator and complete MFA. Then it:
+
+1. Expands your four inputs into the full configuration and prints it.
+2. Creates the resource group - which is also the proof that this session may write. If it
+   cannot, you get one clear message naming the likely cause instead of a half-built estate.
+3. Creates the Entra application and service principal.
+4. Grants it Contributor **on that resource group**, not on the subscription.
+5. Writes `deployment-context.json` - the resolved configuration plus the identity. This is
+   the artifact that joins the two phases.
+6. Signs in as the new identity and reads the scope back, so a broken identity is discovered
+   now rather than during a build.
+
+For a pipeline, issue no secret at all:
+
+```powershell
+.\Phase1-New-DeploymentIdentity.ps1 -InputFile .\inputs.json -Federate -GitHubRepo owner/repo
+```
+
+That adds a federated credential, so GitHub Actions authenticates with OIDC and there is no
+secret to store or rotate.
+
+**What the administrator needs:** Application Administrator or higher in Entra ID to create
+the identity, and Owner or User Access Administrator on the subscription to grant the role.
+Nothing else in this kit needs privilege that high.
+
+---
+
+## Phase 2 - as often as you like
+
+```powershell
+.\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf
+.\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json
+```
+
+No prompts, no browser, no MFA. It signs in as the deployment identity and builds:
+
+| Step | What appears |
 |---|---|
-| `resourceGroup`, `location`, `tags` | The resource group everything lands in |
-| `storageAccountName`, `storageSku` | A StorageV2 account: TLS 1.2 minimum, HTTPS only, no public blob access, large file shares on |
-| `shares` | One Azure file share per entry, with its quota, plus 14-day share soft delete |
-| `network` | A virtual network and a private endpoint subnet, or the existing ones you name |
-| `privateLink` | Private endpoints for the storage account (`file`) and the Storage Sync Service (`Afs`), the `privatelink` DNS zones, and the zone groups that keep their records current |
-| `dnsResolver` | An Azure DNS Private Resolver with a delegated inbound subnet - the address your on-premises DNS forwards to |
-| `backup` | A Recovery Services vault with redundancy and cross-region restore set **before** anything is protected |
-| `identity` | Left off by default; AD DS join is run separately from a domain-joined machine |
+| Storage | StorageV2 account: TLS 1.2 minimum, HTTPS only, no public blob access, large file shares on |
+| Shares | One per entry, with quota, plus 14-day share soft delete |
+| Network | Virtual network and private endpoint subnet, or the existing ones you named |
+| Private Link | Private endpoints for the storage account (`file`) and the Storage Sync Service (`Afs`), the `privatelink` zones, and zone groups that keep the records current |
+| File Sync | Storage Sync Service and sync group |
+| DNS | Azure DNS Private Resolver with a delegated inbound subnet - the address your on-premises DNS forwards to |
+| Backup | Recovery Services vault with redundancy and cross-region restore set **before** anything is protected |
 
-## Things the script does on purpose
+It is idempotent, so a re-run after a failure continues rather than starting over, and it ends
+by printing a verification command for every object it created.
 
-**It is idempotent.** Every object is checked before it is created, so a re-run after a
-failure continues from where it stopped rather than starting again or erroring.
+You can also run phase 2 without a context, using whatever session you already have:
 
-**Every step is verified.** The run ends by printing a verification command for each object
-it created. A step is finished when something reads it back, not when a command returned 0.
+```powershell
+.\Deploy-AfsEnvironment.ps1 -InputFile .\inputs.json -WhatIf
+```
 
-**It will not lock you out.** `disableStoragePublicAccess` and
-`restrictFileSyncToVirtualNetworksOnly` default to `false`. Build first, confirm the private
-endpoints resolve, then re-run with those set to `true`. Closing the public path before a
-private endpoint resolves is the single most common way to break sync, so it is deliberately
-not the default.
+---
 
-**Redundancy is set before protection.** Vault storage redundancy and cross-region restore
-cannot be changed once the vault protects anything, so the script sets them immediately after
-creating the vault and warns you if items already exist.
+## Remove it
 
-**Teardown refuses to be careless.** `Remove-AfsEnvironment.ps1` deletes the resource group,
-which is the only reliable way to leave nothing behind - but it first inventories the group
-and refuses if it finds resources the parameter file does not name. Pass `-Force` when that
-is expected. It also disables backup protection with data deletion first, because a vault
-will not delete while it protects anything.
+```powershell
+.\Remove-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf
+.\Remove-AfsEnvironment.ps1 -Context .\deployment-context.json
+```
 
-## What is deliberately not automated
+It deletes the resource group, which is the only reliable way to leave nothing behind. First
+it inventories the group and **refuses** if it finds resources your configuration does not
+name - pass `-Force` when that is expected. It also disables backup protection with data
+deletion first, because a vault will not delete while it protects anything.
 
-Three things need a human on a specific machine, and pretending otherwise would produce a
-script that fails confusingly:
+---
 
-1. **The Azure File Sync agent.** Installing it on the file server, registering the server
-   against the Storage Sync Service, and creating the server endpoint. Run from the server.
-2. **On-premises DNS forwarders.** The script prints the resolver's inbound IP; pointing your
-   DNS at it is a change in your DNS product, and forwarding should cover the `privatelink`
-   zones only, never the parent `core.windows.net`.
-3. **AD DS domain join of the storage account.** Uses the AzFilesHybrid module from a
-   domain-joined machine with permission to create the identity object in the chosen OU.
+## What is deliberately still manual
+
+Three things need a human on a specific machine, and automating them badly would fail
+confusingly:
+
+1. **The Azure File Sync agent** - install on the file server, register it, create the server
+   endpoint.
+2. **On-premises DNS forwarders** - point them at the resolver inbound IP the deployment
+   printed, for the `privatelink` zones only, never the parent `core.windows.net`.
+3. **The AD DS domain join** - run from a domain-joined machine with AzFilesHybrid, using the
+   AD admin account and OU from your inputs file.
+
+---
+
+## Files
+
+| File | What it is |
+|---|---|
+| `inputs.sample.jsonc` | Copy this. The only file you edit |
+| `AfsConfig.ps1` | Shared resolver - turns four inputs into the full configuration. Both phases use it, so they cannot disagree |
+| `Phase1-New-DeploymentIdentity.ps1` | Phase 1 - identity, RBAC, context |
+| `Deploy-AfsEnvironment.ps1` | Phase 2 - the build |
+| `Remove-AfsEnvironment.ps1` | Teardown, with a safety inventory |
+| `deployment-context.json` | Written by phase 1, consumed by phase 2. Gitignored |
+| `deployment-identity.json` | The secret, if one was issued. Gitignored - move it to your secret store |
 
 ## Running on Windows
 
-Run from **PowerShell**, not Git Bash. Git Bash rewrites any argument that begins with `/`
-into a Windows path, which corrupts Azure resource IDs - they all start with `/subscriptions/`.
-If you must use Git Bash, `export MSYS_NO_PATHCONV=1` first. This is not theoretical: it was
-found by running these commands both ways.
-
-## Prerequisites
-
-- Azure CLI. The script checks the version and tells you if it is missing.
-- The `dns-resolver` extension, only when `dnsResolver.enabled` is true. The script installs
-  it for you.
-- Permission to create resources in the target subscription. Note that many tenants require
-  the signing-in account to have authenticated with MFA before any write is allowed; a
-  non-MFA session fails every create with `RequestDisallowedByAzure`.
+Run from **PowerShell**, not Git Bash. Git Bash rewrites arguments beginning with `/` into
+Windows paths, which corrupts Azure resource IDs - they all start with `/subscriptions/`. If
+you must use Git Bash, `export MSYS_NO_PATHCONV=1` first.

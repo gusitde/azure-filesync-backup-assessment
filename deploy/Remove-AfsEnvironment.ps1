@@ -14,24 +14,29 @@
   2. A Recovery Services vault will not delete while it protects anything. The script
      disables protection with data deletion first, and says so before it does it.
 
-.PARAMETER ParameterFile
-  The same file used for the deployment.
+.PARAMETER Context
+  The deployment context phase 1 wrote - the same one phase 2 used.
+
+.PARAMETER InputFile
+  Alternatively, the four operator inputs.
 
 .PARAMETER Force
   Delete the resource group even if it holds resources the parameter file does not name.
 
 .EXAMPLE
-  .\Remove-AfsEnvironment.ps1 -ParameterFile .\parameters.json -WhatIf
-  .\Remove-AfsEnvironment.ps1 -ParameterFile .\parameters.json
+  .\Remove-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf
+  .\Remove-AfsEnvironment.ps1 -Context .\deployment-context.json
 #>
-[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'Context')]
 param(
-    [Parameter(Mandatory)][string]$ParameterFile,
+    [Parameter(Mandatory, ParameterSetName = 'Context')][string]$Context,
+    [Parameter(Mandatory, ParameterSetName = 'Inputs')][string]$InputFile,
     [switch]$Force
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'AfsConfig.ps1')
 
 function Write-Step { param([string]$T) Write-Host ''; Write-Host ("-> " + $T) -ForegroundColor Cyan }
 function Write-Ok   { param([string]$T) Write-Host ("   OK   " + $T) -ForegroundColor Green }
@@ -76,15 +81,16 @@ function Get-Prop {
     return $p.Value
 }
 
-$raw = Get-Content -Path $ParameterFile -Raw
-$raw = [regex]::Replace($raw, '(?m)^\s*//.*$', '')
-$raw = [regex]::Replace($raw, '(?s)/\*.*?\*/', '')
-$raw = [regex]::Replace($raw, '(?m)\s+//\s.*$', '')
-$p = $raw | ConvertFrom-Json
+if ($PSCmdlet.ParameterSetName -eq 'Context') {
+    $ctx = Read-AfsJsonc -Path $Context
+    $cfg = $ctx.config
+} else {
+    $cfg = Resolve-AfsConfig -Inputs (Read-AfsJsonc -Path $InputFile)
+}
 
-$SubscriptionId = Get-Prop $p 'subscriptionId'
-$ResourceGroup  = Get-Prop $p 'resourceGroup'
-$Backup         = Get-Prop $p 'backup'
+$SubscriptionId = $cfg.subscriptionId
+$ResourceGroup  = $cfg.resourceGroup
+$Backup         = [pscustomobject]@{ vaultName = $cfg.vaultName }
 
 Write-Host ''
 Write-Host 'Azure File Sync environment teardown' -ForegroundColor White
@@ -103,12 +109,10 @@ foreach ($r in $res) { Write-Host ("     - " + $r.name + "  (" + $r.type + ")") 
 
 # names the parameter file accounts for
 $known = New-Object System.Collections.ArrayList
-foreach ($n in @((Get-Prop $p 'storageAccountName'), (Get-Prop $p 'storageSyncServiceName'),
-                 (Get-Prop $Backup 'vaultName'))) { if ($n) { [void]$known.Add($n) } }
-$net = Get-Prop $p 'network'
-if ($net) { $n = Get-Prop $net 'vnetName'; if ($n) { [void]$known.Add($n) } }
-$dns = Get-Prop $p 'dnsResolver'
-if ($dns) { $n = Get-Prop $dns 'name'; if ($n) { [void]$known.Add($n) } }
+foreach ($n in @($cfg.storageAccountName, $cfg.storageSyncServiceName, $cfg.vaultName,
+                 $cfg.vnetName, $cfg.dnsResolverName)) {
+    if ($n) { [void]$known.Add($n) }
+}
 
 $unknown = @($res | Where-Object {
     $name = $_.name

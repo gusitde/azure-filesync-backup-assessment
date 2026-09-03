@@ -14,8 +14,15 @@
   Every step is followed by a verification that reads the object back. A step is finished
   when something proves it, not when a command returns 0.
 
-.PARAMETER ParameterFile
-  Path to the parameter file. Start from parameters.sample.jsonc.
+.PARAMETER Context
+  The deployment context written by Phase1-New-DeploymentIdentity.ps1. Phase 2 signs in as the
+  identity it names and runs unattended.
+
+.PARAMETER InputFile
+  Alternatively, the four operator inputs. Uses whatever session you already have.
+
+.PARAMETER ShowResolved
+  Print what the four inputs expand into, then stop. Changes nothing.
 
 .PARAMETER WhatIf
   Print what would be created and run every read-only precondition, without changing
@@ -26,8 +33,9 @@
   half-built deployment into a clear message before anything is created.
 
 .EXAMPLE
-  .\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json -WhatIf
-  .\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json
+  .\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf
+  .\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json
+  .\Deploy-AfsEnvironment.ps1 -InputFile .\inputs.json -ShowResolved
 
 .NOTES
   Requires the Azure CLI (az) and, for the DNS resolver, the dns-resolver extension:
@@ -38,14 +46,23 @@
   that begin with "/" into Windows paths, which corrupts Azure resource IDs. If you must
   use Git Bash, set MSYS_NO_PATHCONV=1 first.
 #>
-[CmdletBinding(SupportsShouldProcess = $true)]
+[CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = 'Context')]
 param(
-    [Parameter(Mandatory)][string]$ParameterFile,
+    # PHASE 2, unattended: the context phase 1 wrote. Signs in as the deployment identity.
+    [Parameter(Mandatory, ParameterSetName = 'Context')][string]$Context,
+
+    # Or run against the four inputs directly, using whatever session you already have.
+    [Parameter(Mandatory, ParameterSetName = 'Inputs')][string]$InputFile,
+
+    # Print what the four inputs expand into, then stop. Changes nothing, calls nothing.
+    [switch]$ShowResolved,
+
     [switch]$SkipPreflight
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'AfsConfig.ps1')
 
 # ---------------------------------------------------------------- helpers ----
 
@@ -94,17 +111,6 @@ function Invoke-Az {
     try { return $text | ConvertFrom-Json } catch { return $text }
 }
 
-function Read-ParameterFile {
-    param([string]$Path)
-    if (-not (Test-Path $Path)) { throw "Parameter file not found: $Path" }
-    $raw = Get-Content -Path $Path -Raw
-    # strip // line comments and /* */ block comments so JSONC is accepted
-    $raw = [regex]::Replace($raw, '(?m)^\s*//.*$', '')
-    $raw = [regex]::Replace($raw, '(?s)/\*.*?\*/', '')
-    $raw = [regex]::Replace($raw, '(?m)\s+//\s.*$', '')
-    try { return $raw | ConvertFrom-Json }
-    catch { throw "Parameter file is not valid JSON after comment stripping: $($_.Exception.Message)" }
-}
 
 function ConvertTo-Array {
     <#  @(Invoke-Az ...) does NOT flatten: a function that returns an Object[] is emitted
@@ -148,46 +154,103 @@ Write-Host ''
 Write-Host 'Azure File Sync environment deployment' -ForegroundColor White
 Write-Host '======================================' -ForegroundColor White
 
-$p = Read-ParameterFile -Path $ParameterFile
-
-$SubscriptionId = Get-Prop $p 'subscriptionId'
-$Location       = Get-Prop $p 'location'
-$ResourceGroup  = Get-Prop $p 'resourceGroup'
-$SaName         = Get-Prop $p 'storageAccountName'
-$SaSku          = Get-Prop $p 'storageSku' 'Standard_ZRS'
-$SssName        = Get-Prop $p 'storageSyncServiceName'
-$SyncGroup      = Get-Prop $p 'syncGroupName'
-$Shares         = @(Get-Prop $p 'shares' @())
-$Net            = Get-Prop $p 'network'
-$Pl             = Get-Prop $p 'privateLink'
-$Dns            = Get-Prop $p 'dnsResolver'
-$Backup         = Get-Prop $p 'backup'
-$TagsObj        = Get-Prop $p 'tags'
-
-foreach ($req in @(
-        @{ n = 'subscriptionId';         v = $SubscriptionId },
-        @{ n = 'location';               v = $Location },
-        @{ n = 'resourceGroup';          v = $ResourceGroup },
-        @{ n = 'storageAccountName';     v = $SaName })) {
-    if (-not $req.v) { throw "Parameter file is missing required value: $($req.n)" }
+# Two ways in. Either way the configuration is produced by the same resolver, so the two
+# phases can never disagree about what is being built.
+$ctx = $null
+if ($PSCmdlet.ParameterSetName -eq 'Context') {
+    $ctx = Read-AfsJsonc -Path $Context
+    if ($ctx.schema -ne 'afs-deployment-context/1') {
+        throw "Unexpected context schema '$($ctx.schema)'. Regenerate it with Phase1-New-DeploymentIdentity.ps1."
+    }
+    $cfg = $ctx.config
+    Write-Host ("  context      : {0}" -f $Context)
+    Write-Host ("  identity     : {0} ({1})" -f $ctx.identity.displayName, $ctx.identity.appId)
+} else {
+    $cfg = Resolve-AfsConfig -Inputs (Read-AfsJsonc -Path $InputFile)
+    Write-Host ("  inputs       : {0}" -f $InputFile)
 }
+
+if ($ShowResolved) {
+    Show-AfsConfig -Config $cfg
+    Write-Host 'Nothing was changed and nothing was called. Remove -ShowResolved to continue.' -ForegroundColor Yellow
+    return
+}
+
+$SubscriptionId = $cfg.subscriptionId
+$Location       = $cfg.location
+$ResourceGroup  = $cfg.resourceGroup
+$SaName         = $cfg.storageAccountName
+$SaSku          = $cfg.storageSku
+$SssName        = $cfg.storageSyncServiceName
+$SyncGroup      = $cfg.syncGroupName
+$Shares         = @($cfg.shares)
+
+# The rest of the script reads these grouped objects, so build them from the resolved config
+# rather than threading a dozen variables through every step.
+$Net = [pscustomobject]@{
+    createVNet                  = $cfg.createVNet
+    vnetName                    = $cfg.vnetName
+    vnetAddressPrefix           = $cfg.vnetAddressPrefix
+    privateEndpointSubnetName   = $cfg.peSubnetName
+    privateEndpointSubnetPrefix = $cfg.peSubnetPrefix
+    existingVNetResourceGroup   = $cfg.vnetResourceGroup
+    existingVNetName            = $cfg.vnetName
+    existingSubnetName          = $cfg.peSubnetName
+}
+$Pl = [pscustomobject]@{
+    enableStorageFilePrivateEndpoint     = $true
+    enableFileSyncPrivateEndpoint        = $true
+    createPrivateDnsZones                = $true
+    disableStoragePublicAccess           = $false
+    restrictFileSyncToVirtualNetworksOnly = $false
+}
+$Dns = [pscustomobject]@{
+    enabled             = $cfg.deployDnsResolver
+    name                = $cfg.dnsResolverName
+    inboundSubnetName   = $cfg.inboundSubnetName
+    inboundSubnetPrefix = $cfg.inboundSubnetPrefix
+    createOutboundEndpoint = $false
+}
+$Backup = [pscustomobject]@{
+    enabled                  = $cfg.deployBackup
+    vaultName                = $cfg.vaultName
+    storageRedundancy        = $cfg.storageRedundancy
+    enableCrossRegionRestore = $cfg.crossRegionRestore
+    policyName               = $cfg.backupPolicyName
+    dailyRetentionDays       = $cfg.backupRetentionDays
+}
+$TagArgs = @('purpose=azure-file-sync', "prefix=$($cfg.namePrefix)")
 
 if ($SaName -notmatch '^[a-z0-9]{3,24}$') {
-    throw "storageAccountName '$SaName' is invalid: 3-24 characters, lowercase letters and digits only."
+    throw "Derived storage account name '$SaName' is invalid: 3-24 lowercase letters and digits. Shorten azure.namePrefix."
 }
 
-$TagArgs = @()
-if ($TagsObj) {
-    foreach ($t in $TagsObj.PSObject.Properties) { $TagArgs += ("{0}={1}" -f $t.Name, $t.Value) }
-}
-
-Write-Host ''
 Write-Host ("  subscription : {0}" -f $SubscriptionId)
 Write-Host ("  location     : {0}" -f $Location)
 Write-Host ("  group        : {0}" -f $ResourceGroup)
 Write-Host ("  storage      : {0} ({1})" -f $SaName, $SaSku)
 Write-Host ("  shares       : {0}" -f (($Shares | ForEach-Object { $_.name }) -join ', '))
 if ($WhatIfPreference) { Write-Host '  MODE         : WHAT-IF (nothing will be changed)' -ForegroundColor Yellow }
+
+# ------------------------------------------------------- unattended sign-in --
+# Phase 2 signs in as the identity phase 1 created, so it needs no human and no MFA.
+if ($ctx -and -not $WhatIfPreference) {
+    $secretPath = $null
+    if ($ctx.identity.secretFile) { $secretPath = Join-Path (Split-Path -Parent (Resolve-Path $Context)) $ctx.identity.secretFile }
+    if ($secretPath -and (Test-Path $secretPath)) {
+        Write-Host ''
+        Write-Host ("[0] Signing in as the deployment identity " + $ctx.identity.appId) -ForegroundColor Cyan
+        $sec = Get-Content $secretPath -Raw | ConvertFrom-Json
+        $null = & az login --service-principal -u $sec.appId -p $sec.password --tenant $sec.tenantId --only-show-errors -o none 2>&1
+        if ($LASTEXITCODE -ne 0) { throw 'Could not sign in as the deployment identity. Re-run phase 1, or sign in manually.' }
+        & az account set --subscription $SubscriptionId 2>&1 | Out-Null
+        Write-Host '      OK    signed in unattended' -ForegroundColor Green
+    } else {
+        Write-Host ''
+        Write-Host '      ..    no secret file found; using the session you already have' -ForegroundColor DarkGray
+        Write-Host '            (correct for a federated identity in a pipeline)' -ForegroundColor DarkGray
+    }
+}
 
 # --------------------------------------------------------------- preflight ---
 
@@ -519,6 +582,6 @@ Write-Host '     shown above, for the privatelink zones only.'
 Write-Host '  3. Domain-join the storage account with AzFilesHybrid if AD DS authentication'
 Write-Host '     is required, from a domain-joined machine.'
 Write-Host ''
-Write-Host 'Remove everything with: .\Remove-AfsEnvironment.ps1 -ParameterFile ' -NoNewline
-Write-Host $ParameterFile
+$removeArg = if ($PSCmdlet.ParameterSetName -eq 'Context') { "-Context $Context" } else { "-InputFile $InputFile" }
+Write-Host ('Remove everything with: .\Remove-AfsEnvironment.ps1 ' + $removeArg)
 Write-Host ''

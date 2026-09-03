@@ -188,56 +188,74 @@ or a tracker.
 
 ## 6. Build an environment
 
-Everything comes from one parameter file. There is nothing else to edit.
+You supply four things. Phase 1 runs once, interactively. Phase 2 runs unattended.
 
-### Step 1 - make your parameter file
+### Step 1 - fill in the four inputs
 
 ```powershell
 cd deploy
-Copy-Item parameters.sample.jsonc parameters.json
-notepad parameters.json
+Copy-Item inputs.sample.jsonc inputs.json
+notepad inputs.json
 ```
 
-The file is commented throughout. The values you must change:
+| # | What you enter | Why |
+|---|---|---|
+| 1 | **Entra global admin** account | Phase 1 only - creates the deployment identity and grants it a role. Never used again |
+| 2 | **Azure subscription** and a short `namePrefix` | Where it is built, and the one naming decision you make |
+| 3 | **AD admin account** | Domain-joins the storage account. Needs only permission to create an object in the OU below, not Domain Admin |
+| 4 | **AD basics** - domain FQDN, NetBIOS name, the OU for the identity object, object type | What the join actually needs to know |
 
-| Value | What it is |
-|---|---|
-| `subscriptionId` | Where it all goes |
-| `location` | Azure region |
-| `resourceGroup` | The group everything lands in |
-| `storageAccountName` | 3-24 characters, lowercase and digits, globally unique |
-| `shares` | One entry per file share, with its quota |
-| `network` | Create a new VNet, or name an existing VNet and subnet |
-| `backup.dailyRetentionDays` | Your retention requirement, in days |
-
-Leave the rest at the defaults on a first run. In particular leave
-`privateLink.disableStoragePublicAccess` and `restrictFileSyncToVirtualNetworksOnly` set to
-`false` - see step 4.
-
-### Step 2 - see what would happen
+Everything else is derived. See exactly what you will get before anything runs:
 
 ```powershell
-.\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json -WhatIf
+.\Deploy-AfsEnvironment.ps1 -InputFile .\inputs.json -ShowResolved
 ```
 
-Nothing is changed. The preflight checks run for real: CLI version, sign-in, subscription
-access, the dns-resolver extension, and whether your storage account name is available. Then
-every step prints what it would create.
+With `namePrefix: contoso` in `eastus` you get `rg-contoso-filesync`, `stcontosofs01`,
+`sss-contoso-filesync`, `vnet-contoso-filesync`, `dnspr-contoso-eastus`, `rsv-contoso-eastus`.
+Override any of them in the `overrides` section if your naming standard differs.
 
-**Always run this first.** It catches a taken storage account name or a missing sign-in in
-seconds, rather than halfway through a build.
-
-### Step 3 - build it
+### Step 2 - phase 1, once
 
 ```powershell
-.\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json
+.\Phase1-New-DeploymentIdentity.ps1 -InputFile .\inputs.json
 ```
 
-The script is idempotent: it checks whether each object exists before creating it, so if
-something fails you fix the cause and run it again rather than starting over.
+A browser opens. Sign in as the administrator and complete MFA - this is the single human step
+in the whole process, and it exists because most tenants require MFA for every ARM write.
 
-When it finishes it prints a verification command for every object it created. Run them. A
-step is finished when something reads it back.
+Phase 1 then creates the resource group (which is also how it proves the session may write),
+creates the Entra deployment identity, grants it Contributor **on that resource group only**,
+writes `deployment-context.json`, and finally signs in as the new identity to prove it works.
+If the identity is broken you find out here, not during a build.
+
+For a pipeline, issue no secret at all:
+
+```powershell
+.\Phase1-New-DeploymentIdentity.ps1 -InputFile .\inputs.json -Federate -GitHubRepo owner/repo
+```
+
+That adds a federated credential so GitHub Actions authenticates with OIDC - nothing to store,
+nothing to rotate.
+
+**The administrator needs** Application Administrator or higher in Entra ID to create the
+identity, and Owner or User Access Administrator on the subscription to grant the role.
+
+### Step 3 - phase 2, unattended
+
+```powershell
+.\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf
+.\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json
+```
+
+No prompts, no browser, no MFA - it signs in as the identity phase 1 created. Always run the
+what-if first; it executes the real preflight checks (CLI version, sign-in, subscription
+access, the dns-resolver extension, storage account name availability) and then shows every
+step without changing anything.
+
+The script is idempotent, so if something fails you fix the cause and run it again rather than
+starting over. When it finishes it prints a verification command for every object it created.
+Run them.
 
 ### Step 4 - verify, then lock down
 
@@ -250,7 +268,8 @@ Resolve-DnsName <storageaccount>.file.core.windows.net
 Test-NetConnection <storageaccount>.file.core.windows.net -Port 445
 ```
 
-Only once that is right, set these two to `true` in the parameter file and re-run:
+Only once that is right, set these two to `true` in the `overrides` section of your inputs
+file and re-run phase 2:
 
 ```jsonc
 "disableStoragePublicAccess": true,
@@ -298,8 +317,8 @@ Azure roles and NTFS permissions both apply - a user needs both.
 ## 7. Remove it again
 
 ```powershell
-.\Remove-AfsEnvironment.ps1 -ParameterFile .\parameters.json -WhatIf
-.\Remove-AfsEnvironment.ps1 -ParameterFile .\parameters.json
+.\Remove-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf
+.\Remove-AfsEnvironment.ps1 -Context .\deployment-context.json
 ```
 
 It deletes the resource group, which is the only reliable way to leave nothing behind. Before
@@ -332,7 +351,7 @@ data deletion first, because a vault will not delete while it protects anything.
 | `Export-AzFileSyncEnvironment.ps1` | Read-only export of the cloud side |
 | `Get-AfsServerDiagnostics.ps1` | Per-server diagnostic bundle |
 | `Assess-AzFileSyncExport.ps1` | Turns an export into a findings report |
-| `deploy/` | Parameter file, deployment script, teardown script |
+| `deploy/` | The four inputs, the two phases, and the teardown script |
 | `advise/` | The decision-led design path when there is nothing to assess |
 | `codex/` | Blueprints (target state), playbooks (how to build), runbooks (when it breaks) |
 | `codex/diagrams/` | 97 diagrams, grouped by architecture principle |

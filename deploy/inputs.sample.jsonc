@@ -1,0 +1,115 @@
+// ---------------------------------------------------------------------------
+// THE ONLY FILE YOU EDIT.
+//
+// Four things are required. Everything else - resource group, storage account,
+// share names, virtual network, subnets, DNS zones, vault, policy - is derived
+// from namePrefix and location, and you can override any of it in the optional
+// section at the bottom if your naming standard differs.
+//
+//   Phase 1 (once):  .\Phase1-New-DeploymentIdentity.ps1 -InputFile .\inputs.json
+//   Phase 2 (build): .\Deploy-AfsEnvironment.ps1        -InputFile .\inputs.json -WhatIf
+//                    .\Deploy-AfsEnvironment.ps1        -InputFile .\inputs.json
+//
+// See what the four inputs expand into, before running anything:
+//                    .\Deploy-AfsEnvironment.ps1 -InputFile .\inputs.json -ShowResolved
+// ---------------------------------------------------------------------------
+{
+
+  // == 1. Entra global administrator ========================================
+  // Used by PHASE 1 ONLY, to create the deployment identity and grant it RBAC.
+  // Phase 2 never uses this account - it runs as the identity phase 1 creates.
+  //
+  // Needs: Application Administrator (or Global Administrator) in Entra ID to
+  // create the service principal, and Owner or User Access Administrator on the
+  // subscription to grant it a role.
+  //
+  // Many tenants require MFA for every write, so this sign-in is interactive by
+  // design. That is the one human step; after it, deployment runs unattended.
+  "entraGlobalAdmin": {
+    "userPrincipalName": "admin@contoso.onmicrosoft.com",
+    "tenantId": "00000000-0000-0000-0000-000000000000"
+  },
+
+  // == 2. The Azure subscription to build in ================================
+  "azure": {
+    "subscriptionId": "00000000-0000-0000-0000-000000000000",
+    "location": "eastus",
+
+    // 2-8 lowercase letters/digits. Every resource name is derived from this,
+    // so it is the one naming decision you make.
+    //   namePrefix "monty" produces rg-monty-filesync, stmontyfsdemo,
+    //   sss-monty-filesync, vnet-monty-filesync, rsv-monty-filesync ...
+    "namePrefix": "contoso",
+
+    // Appended to the storage account name to keep it globally unique.
+    // Change it if the deployment reports the name is taken.
+    "uniqueSuffix": "01"
+  },
+
+  // == 3. The Active Directory admin account ================================
+  // Used to domain-join the storage account so users authenticate with their
+  // normal AD credentials and existing NTFS permissions apply.
+  //
+  // Needs: permission to CREATE an object in the OU named below. That is all -
+  // it does not need Domain Admin, and asking for Domain Admin here is a common
+  // and unnecessary escalation.
+  //
+  // Run the join from a domain-joined machine. The password is never stored in
+  // this file; you are prompted for it, or it is read from your secret store.
+  "activeDirectoryAdmin": {
+    "userPrincipalName": "svc-azurefiles@corp.contoso.com",
+
+    // Where to read the password from at run time:
+    //   "prompt"           - ask interactively (default, and fine for a one-off)
+    //   "env:VAR_NAME"     - read from an environment variable
+    //   "registry:<id>"    - resolve from the credential registry by id
+    "passwordSource": "prompt"
+  },
+
+  // == 4. Active Directory basics ===========================================
+  // What the storage account join actually needs to know.
+  "activeDirectory": {
+    // The AD DS domain the file servers and users belong to.
+    "domainFqdn": "corp.contoso.com",
+
+    // Short NetBIOS name, usually the first label uppercased.
+    "netBiosName": "CONTOSO",
+
+    // Where the storage account's identity object is created. Use a dedicated
+    // OU rather than the default Computers container, so it can be found,
+    // audited and delegated. Create it before you run the join.
+    "organizationalUnitDistinguishedName": "OU=AzureFiles,OU=Servers,DC=corp,DC=contoso,DC=com",
+
+    // "ComputerAccount"    - recommended; the identity is a computer object
+    // "ServiceLogonAccount" - use only if policy forbids computer objects
+    "identityObjectType": "ComputerAccount",
+
+    // Leave empty to let the join pick a domain controller. Set a specific DC or
+    // AD site when the file servers sit in a site with poor connectivity to the
+    // one that would otherwise be chosen.
+    "domainControllerOrSite": ""
+  },
+
+  // == OPTIONAL: override anything derived ==================================
+  // Delete this whole section to accept the defaults. Anything you set here
+  // wins over the derived value. Run with -ShowResolved to see what you get.
+  "overrides": {
+    // "resourceGroup": "rg-my-standard-name",
+    // "storageAccountName": "mystorageacct01",
+    // "storageSku": "Standard_ZRS",              // ZRS | GRS | LRS - one way, see below
+    // "shares": [ { "name": "dept-shares", "quotaGiB": 1024 } ],
+    // "vnetAddressPrefix": "10.60.0.0/16",
+    // "backupDailyRetentionDays": 60,
+    // "existingVNet":  { "resourceGroup": "rg-hub", "name": "vnet-hub", "subnet": "snet-pe" },
+    // "deployDnsResolver": true,
+    // "deployBackup": true,
+    // "enableAdDsJoin": true
+  }
+
+  // Two decisions in here cannot be reversed later, so they are worth a moment:
+  //   storageSku      - redundancy is fixed when the account is created;
+  //                     changing it afterwards is a data migration.
+  //   backup vault    - redundancy and cross-region restore must be set before
+  //                     the first item is protected. The script does this for
+  //                     you, in the right order.
+}

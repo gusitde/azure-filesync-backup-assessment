@@ -1,3 +1,9 @@
 afs-export-*/
 *.zip
 *-afs-server-*/
+
+# phase 1 writes the deployment identity here - it contains a secret
+deploy/deployment-identity.json
+deploy/parameters.json
+deploy/parameters.*.jsonc
+!deploy/parameters.sample.jsonc

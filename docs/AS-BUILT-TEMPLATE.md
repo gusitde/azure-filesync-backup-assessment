@@ -19,7 +19,7 @@
 
 ```powershell
 # capture everything the run printed, so the as-built is written from a record rather than memory
-.\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json *>&1 |
+.\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json *>&1 |
     Tee-Object -FilePath ..\as-built-deploy-log.txt
 ```
 
