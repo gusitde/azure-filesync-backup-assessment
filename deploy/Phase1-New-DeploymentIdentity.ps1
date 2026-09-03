@@ -73,7 +73,18 @@ $ErrorActionPreference = 'Stop'
 if (-not $env:AFS_LOG_FILE) { Start-AfsLog -Level Verbose -Name 'phase1' | Out-Null }
 Write-Host ('  log: ' + $env:AFS_LOG_FILE) -ForegroundColor DarkGray
 
-function Write-Step  { param([string]$T) Write-AfsLog -Level STEP -Message $T; Write-Host ''; Write-Host ("-> " + $T) -ForegroundColor Cyan }
+$script:StepNo = 0
+$script:StepTotal = 9
+$script:ProgressActivity = 'Phase 1 - deployment identity'
+function Write-Step {
+    param([string]$T)
+    $script:StepNo++
+    Write-AfsLog -Level STEP -Message ('[' + $script:StepNo + '/' + $script:StepTotal + '] ' + $T)
+    Write-Host ''
+    Write-AfsPhaseStrip -Done ($script:StepNo - 1) -Total $script:StepTotal
+    Write-Host ("-> [{0}/{1}] {2}" -f $script:StepNo, $script:StepTotal, $T) -ForegroundColor Cyan
+    Write-AfsProgress -Activity $script:ProgressActivity -Status $T -Step $script:StepNo -Total $script:StepTotal
+}
 function Write-Ok    { param([string]$T) Write-AfsLog -Level INFO -Message ("ok: " + $T); Write-Host ("   OK   " + $T) -ForegroundColor Green }
 function Write-Warn2 { param([string]$T) Write-AfsLog -Level WARN -Message $T; Write-Host ("   WARN " + $T) -ForegroundColor Yellow }
 
@@ -203,12 +214,22 @@ if ($appId -and $PSCmdlet.ShouldProcess($scope, "grant $Role")) {
     if ($have -and [int]$have -gt 0) {
         Write-Ok 'already granted'
     } else {
+        # a role assignment for a just-created principal can fail with PrincipalNotFound until
+        # the directory has replicated it; --assignee-object-id avoids the Graph lookup, and
+        # this retries the remaining window rather than failing on the first attempt
         $err = $null
-        try {
-            Invoke-Az @('role', 'assignment', 'create', '--assignee-object-id', $spOid,
-                '--assignee-principal-type', 'ServicePrincipal', '--role', $Role,
-                '--scope', $scope, '-o', 'none') | Out-Null
-        } catch { $err = $_.Exception.Message }
+        for ($try = 1; $try -le 6; $try++) {
+            $err = $null
+            try {
+                Invoke-Az @('role', 'assignment', 'create', '--assignee-object-id', $spOid,
+                    '--assignee-principal-type', 'ServicePrincipal', '--role', $Role,
+                    '--scope', $scope, '-o', 'none') | Out-Null
+                break
+            } catch { $err = $_.Exception.Message }
+            if ($err -notmatch 'PrincipalNotFound' -and $err -notmatch 'does not exist in the directory') { break }
+            Write-Warn2 ("principal not replicated yet (attempt " + $try + "/6) - waiting 10 s")
+            Start-Sleep -Seconds 10
+        }
         if ($err) {
             Show-AzureFailure -Message $err -Context "The identity was created, but $Role could not be granted to it."
             throw 'Stopped. Grant the role, then run this again - it will reuse the identity.'
@@ -252,24 +273,29 @@ if ($secret -and -not $WhatIfPreference) {
 # ----------------------------------------------------------------- verify ---
 
 Write-Step 'Proving the new identity works, before phase 2 depends on it'
-if ($secret -and $appId -and $PSCmdlet.ShouldProcess($appId, 'sign in as the deployment identity')) {
-    Invoke-Az @('logout') -AllowFailure | Out-Null
-    $ok = Invoke-Az @('login', '--service-principal', '-u', $appId, '-p', $secret,
-        '--tenant', $acct.tenantId, '--only-show-errors', '-o', 'json') -AllowFailure
-    if ($ok) {
-        Invoke-Az @('account', 'set', '--subscription', $cfg.subscriptionId) -AllowFailure | Out-Null
-        $seen = Invoke-Az @('group', 'show', '-n', $cfg.resourceGroup, '--query', 'name', '-o', 'tsv') -AllowFailure
-        if ($seen) { Write-Ok "the identity can reach $seen - phase 2 will run unattended" }
-        else { Write-Warn2 'signed in, but the scope is not visible yet. Role assignments can take a minute to propagate; re-check before running phase 2.' }
+$identityVerified = $false
+if ($secret -and $appId -and $PSCmdlet.ShouldProcess($appId, 'request a token as the deployment identity and read the scope')) {
+    # This does NOT run "az login --service-principal": that would replace YOUR session in
+    # the shared CLI profile and log you out. It asks Entra for a token directly and reads
+    # the resource group with it, retrying while the new identity replicates.
+    Write-Host '      ..    a new identity takes 10-60 s to replicate; retrying until it answers' -ForegroundColor DarkGray
+    $t = Test-AfsServicePrincipal -TenantId $acct.tenantId -AppId $appId -Secret $secret -Scope $scope
+    if ($t.Ok) {
+        $identityVerified = $true
+        Write-Ok ("the identity can sign in and read " + $cfg.resourceGroup + " (ready after " + $t.Attempts + " attempt(s)) - phase 2 will run unattended")
     } else {
-        Write-Warn2 'could not sign in as the new identity. Check the secret and tenant.'
+        Write-Warn2 ('the identity is not usable yet: ' + $t.Detail)
+        Write-Warn2 'this is usually replication delay. Wait a minute and run phase 2 with -WhatIf; it re-tests before building.'
     }
 } else {
     Write-Warn2 'sign-in test skipped (federated identity, or a what-if run)'
 }
+Write-Ok ("your own session is untouched: still signed in as " + $acct.user.name)
 
 Write-Host ''
 Write-Host '=============================' -ForegroundColor White
+Complete-AfsProgress -Activity $script:ProgressActivity
+Write-AfsPhaseStrip -Done $script:StepTotal -Total $script:StepTotal
 Write-Host 'Phase 1 complete.' -ForegroundColor Green
 Write-Host ''
 Write-Host 'Phase 2 needs no human input:' -ForegroundColor White

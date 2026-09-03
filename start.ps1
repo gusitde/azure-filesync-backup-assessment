@@ -384,13 +384,25 @@ Single-file restore comes from the snapshot tier, which allows up to 200 days." 
 
 # ----------------------------------------------------------------- flows ----
 
+$script:StageTotal = 7
+function Set-WizardStage {
+    # overall progress across the whole build, above the per-script bars (Id 1 stacks over Id 0)
+    param([int]$Stage, [string]$Text)
+    Write-AfsLog -Level STEP -Message ('stage ' + $Stage + '/' + $script:StageTotal + ': ' + $Text)
+    Write-Host ''
+    Write-AfsPhaseStrip -Done $Stage -Total $script:StageTotal -Label 'stages'
+    Write-AfsProgress -Activity 'Azure File Sync wizard' -Status $Text -Step $Stage -Total $script:StageTotal -Id 1
+}
+
 function Invoke-BuildFlow {
     if (-not (Test-Prerequisites -ForDeploy)) { return }
+    Set-WizardStage 1 'prerequisites checked'
 
     # Sign in FIRST. Until we are authenticated we cannot list the subscriptions you can
     # actually see, and asking you to type a GUID from memory is a poor substitute.
     $acct = Ensure-SignedIn
     if (-not $acct) { return }
+    Set-WizardStage 2 'signed in'
 
     if (Test-Path $script:InputsFile) {
         Write-Title 'Your answers'
@@ -402,6 +414,7 @@ function Invoke-BuildFlow {
     if (-not (Test-Path $script:InputsFile)) { Write-Bad 'no inputs file; cannot continue.'; return }
 
     # show what will be built
+    Set-WizardStage 3 'answers ready'
     Write-Title 'What this will create'
     Push-Location $script:DeployDir
     try {
@@ -414,6 +427,7 @@ function Invoke-BuildFlow {
     }
 
     # phase 1
+    Set-WizardStage 4 'design reviewed'
     Write-Title 'Phase 1 - the deployment identity'
     Write-Explain "Creates a service principal and gives it Contributor on the one resource
 group. After this, every deployment runs without a human."
@@ -441,6 +455,7 @@ Administrator on this subscription."
     Write-Good 'phase 1 complete'
 
     # phase 2 dry run
+    Set-WizardStage 5 'phase 1 done - identity ready'
     Write-Title 'Phase 2 - dry run first'
     Write-Explain "Nothing is changed. This checks your access and shows every step."
     Push-Location $script:DeployDir
@@ -454,6 +469,7 @@ Administrator on this subscription."
         return
     }
 
+    Set-WizardStage 6 'dry run reviewed - building'
     Write-Title 'Phase 2 - building'
     Push-Location $script:DeployDir
     try {
@@ -467,6 +483,8 @@ from where it stopped rather than starting over."
     }
     Pop-Location
 
+    Set-WizardStage 7 'built'
+    Complete-AfsProgress -Activity 'Azure File Sync wizard' -Id 1
     Write-Title 'Done'
     Write-Explain "Three things still need a human, on a specific machine:
   1. install the Azure File Sync agent on the file server and register it

@@ -41,7 +41,18 @@ $ErrorActionPreference = 'Stop'
 if (-not $env:AFS_LOG_FILE) { Start-AfsLog -Level Verbose -Name 'remove' | Out-Null }
 Write-Host ('  log: ' + $env:AFS_LOG_FILE) -ForegroundColor DarkGray
 
-function Write-Step { param([string]$T) Write-AfsLog -Level STEP -Message $T; Write-Host ''; Write-Host ("-> " + $T) -ForegroundColor Cyan }
+$script:StepNo = 0
+$script:StepTotal = 4
+$script:ProgressActivity = 'Teardown'
+function Write-Step {
+    param([string]$T)
+    $script:StepNo++
+    Write-AfsLog -Level STEP -Message ('[' + $script:StepNo + '/' + $script:StepTotal + '] ' + $T)
+    Write-Host ''
+    Write-AfsPhaseStrip -Done ($script:StepNo - 1) -Total $script:StepTotal
+    Write-Host ("-> [{0}/{1}] {2}" -f $script:StepNo, $script:StepTotal, $T) -ForegroundColor Cyan
+    Write-AfsProgress -Activity $script:ProgressActivity -Status $T -Step $script:StepNo -Total $script:StepTotal
+}
 function Write-Ok   { param([string]$T) Write-AfsLog -Level INFO -Message ("ok: " + $T); Write-Host ("   OK   " + $T) -ForegroundColor Green }
 function Write-Warn2 { param([string]$T) Write-AfsLog -Level WARN -Message $T; Write-Host ("   WARN " + $T) -ForegroundColor Yellow }
 
@@ -154,6 +165,8 @@ foreach ($l in $locks) {
 Write-Step ('Resource group ' + $ResourceGroup)
 if ($PSCmdlet.ShouldProcess($ResourceGroup, 'DELETE the resource group and everything in it')) {
     Invoke-Az @('group', 'delete', '-n', $ResourceGroup, '--yes', '--no-wait', '-o', 'none') | Out-Null
+Complete-AfsProgress -Activity $script:ProgressActivity
+Write-AfsPhaseStrip -Done $script:StepTotal -Total $script:StepTotal
     Write-Ok 'delete issued (asynchronous)'
     Write-Host ''
     Write-Host 'Confirm it is gone with:' -ForegroundColor White

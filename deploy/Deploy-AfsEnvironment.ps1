@@ -73,12 +73,16 @@ $script:Created = New-Object System.Collections.ArrayList
 $script:Verifications = New-Object System.Collections.ArrayList
 $script:StepNo = 0
 
+$script:StepTotal = 15
+$script:ProgressActivity = 'Azure File Sync deployment'
 function Write-Step {
     param([string]$Text)
     $script:StepNo++
     Write-AfsLog -Level STEP -Message ('[' + $script:StepNo + '] ' + $Text)
     Write-Host ''
-    Write-Host ("[{0}] {1}" -f $script:StepNo, $Text) -ForegroundColor Cyan
+    Write-AfsPhaseStrip -Done ($script:StepNo - 1) -Total $script:StepTotal
+    Write-Host ("[{0}/{1}] {2}" -f $script:StepNo, $script:StepTotal, $Text) -ForegroundColor Cyan
+    Write-AfsProgress -Activity $script:ProgressActivity -Status $Text -Step $script:StepNo -Total $script:StepTotal
 }
 
 function Write-Ok   { param([string]$T) Write-AfsLog -Level INFO -Message ("ok: " + $T); Write-Host ("      OK    " + $T) -ForegroundColor Green }
@@ -215,21 +219,40 @@ if ($WhatIfPreference) { Write-Host '  MODE         : WHAT-IF (nothing will be c
 
 # ------------------------------------------------------- unattended sign-in --
 # Phase 2 signs in as the identity phase 1 created, so it needs no human and no MFA.
-if ($ctx -and -not $WhatIfPreference) {
-    $secretPath = $null
-    if ($ctx.identity.secretFile) { $secretPath = Join-Path (Split-Path -Parent (Resolve-Path $Context)) $ctx.identity.secretFile }
-    if ($secretPath -and (Test-Path $secretPath)) {
-        Write-Host ''
-        Write-Host ("[0] Signing in as the deployment identity " + $ctx.identity.appId) -ForegroundColor Cyan
-        $sec = Get-Content $secretPath -Raw | ConvertFrom-Json
-        $null = & az login --service-principal -u $sec.appId -p $sec.password --tenant $sec.tenantId --only-show-errors -o none 2>&1
-        if ($LASTEXITCODE -ne 0) { throw 'Could not sign in as the deployment identity. Re-run phase 1, or sign in manually.' }
-        & az account set --subscription $SubscriptionId 2>&1 | Out-Null
-        Write-Host '      OK    signed in unattended' -ForegroundColor Green
+if ($ctx) {
+    Write-Host ''
+    Write-Host '[0] Which identity runs this' -ForegroundColor Cyan
+    # If a session already exists and can reach the resource group - the wizard's, or a
+    # pipeline's federated one - use it and leave it alone. Only sign in as the deployment
+    # identity when nothing else is signed in; that is the genuinely unattended case, and
+    # "az login --service-principal" would otherwise replace the operator's own session.
+    $who = $null
+    $probe = Invoke-Az @('account', 'show', '--query', 'user.name', '-o', 'tsv') -AllowFailure
+    if ($probe) {
+        $canRead = Invoke-Az @('group', 'show', '-n', $ResourceGroup, '--subscription', $SubscriptionId, '--query', 'name', '-o', 'tsv') -AllowFailure
+        if ($canRead) { $who = $probe }
+    }
+    if ($who) {
+        Write-Host ("      OK    using the current session: " + $who) -ForegroundColor Green
+        Invoke-Az @('account', 'set', '--subscription', $SubscriptionId) -AllowFailure | Out-Null
     } else {
-        Write-Host ''
-        Write-Host '      ..    no secret file found; using the session you already have' -ForegroundColor DarkGray
-        Write-Host '            (correct for a federated identity in a pipeline)' -ForegroundColor DarkGray
+        $secretPath = $null
+        if ($ctx.identity.secretFile) { $secretPath = Join-Path (Split-Path -Parent (Resolve-Path $Context)) $ctx.identity.secretFile }
+        if ($secretPath -and (Test-Path $secretPath)) {
+            $sec = Get-Content $secretPath -Raw | ConvertFrom-Json
+            Write-Host ("      ..    no usable session - signing in as the deployment identity " + $sec.appId) -ForegroundColor DarkGray
+            if (-not $WhatIfPreference) {
+                $t = Test-AfsServicePrincipal -TenantId $sec.tenantId -AppId $sec.appId -Secret $sec.password -Scope ("/subscriptions/" + $SubscriptionId + "/resourceGroups/" + $ResourceGroup) -MaxAttempts 6
+                if (-not $t.Ok) { throw ('The deployment identity cannot sign in yet: ' + $t.Detail + '. Wait a minute and try again, or re-run phase 1.') }
+                Invoke-Az @('login', '--service-principal', '-u', $sec.appId, '-p', $sec.password, '--tenant', $sec.tenantId, '--only-show-errors', '-o', 'none') | Out-Null
+                Invoke-Az @('account', 'set', '--subscription', $SubscriptionId) -AllowFailure | Out-Null
+                Write-Host '      OK    signed in unattended' -ForegroundColor Green
+            } else {
+                Write-Host '      ..    what-if: would sign in as the deployment identity' -ForegroundColor DarkGray
+            }
+        } else {
+            throw 'No signed-in session and no deployment secret file. Run az login, or re-run phase 1.'
+        }
     }
 }
 
@@ -537,7 +560,9 @@ if ($Pl -and (Get-Prop $Pl 'disableStoragePublicAccess' $false)) {
 
 # ----------------------------------------------------------------- summary ---
 
+Complete-AfsProgress -Activity $script:ProgressActivity
 Write-Host ''
+Write-AfsPhaseStrip -Done $script:StepTotal -Total $script:StepTotal
 Write-Host '======================================' -ForegroundColor White
 if ($WhatIfPreference) {
     Write-Host 'WHAT-IF complete. Nothing was changed.' -ForegroundColor Yellow

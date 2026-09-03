@@ -41,7 +41,7 @@ function Start-AfsLog {
         [string]$Directory
     )
     if (-not $Directory) { $Directory = Get-AfsLogDirectory }
-    if (-not (Test-Path $Directory)) { New-Item -ItemType Directory -Path $Directory -Force | Out-Null }
+    if (-not (Test-Path $Directory)) { New-Item -ItemType Directory -Path $Directory -Force -WhatIf:$false -Confirm:$false | Out-Null }
 
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
     $base  = Join-Path $Directory ("{0}-{1}" -f $Name, $stamp)
@@ -53,7 +53,7 @@ function Start-AfsLog {
 
     # the transcript catches anything our own logging did not - including a crash in code
     # that runs before or outside a try block
-    try { Start-Transcript -Path "$base.transcript.txt" -Append -ErrorAction SilentlyContinue | Out-Null } catch { }
+    try { Start-Transcript -Path "$base.transcript.txt" -Append -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
 
     $azv = $null
     try { $azv = (& az version -o json 2>$null | ConvertFrom-Json).'azure-cli' } catch { }
@@ -74,7 +74,7 @@ function Start-AfsLog {
 function Stop-AfsLog {
     param([string]$Outcome = 'ended')
     if ($env:AFS_LOG_FILE) { Write-AfsLog -Level INFO -Message ("log " + $Outcome) }
-    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+    try { Stop-Transcript -WhatIf:$false -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
 }
 
 function Write-AfsLog {
@@ -88,19 +88,20 @@ function Write-AfsLog {
 
     $ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     try {
-        Add-Content -Path $env:AFS_LOG_FILE -Value ("{0} [{1,-5}] {2}" -f $ts, $Level, $Message) -Encoding ascii
+        Add-Content -Path $env:AFS_LOG_FILE -Value ("{0} [{1,-5}] {2}" -f $ts, $Level, $Message) -Encoding ascii -WhatIf:$false -Confirm:$false
     } catch { }
 
     try {
         $rec = [ordered]@{ ts = $ts; run = $env:AFS_LOG_RUN; level = $Level; msg = $Message }
         if ($Data) { foreach ($k in $Data.Keys) { $rec[$k] = $Data[$k] } }
-        Add-Content -Path $env:AFS_LOG_JSONL -Value ($rec | ConvertTo-Json -Compress -Depth 5) -Encoding ascii
+        Add-Content -Path $env:AFS_LOG_JSONL -Value ($rec | ConvertTo-Json -Compress -Depth 5) -Encoding ascii -WhatIf:$false -Confirm:$false
     } catch { }
 
-    # the scripts already print INFO/STEP/WARN/ERROR themselves; only DEBUG needs a console
-    # echo, and only when someone asked for it
-    if ($Level -eq 'DEBUG' -and $env:AFS_LOG_LEVEL -eq 'Debug') {
-        Write-Host ("      dbg   " + $Message) -ForegroundColor DarkGray
+    # the scripts already print INFO/STEP/WARN/ERROR themselves. DEBUG carries every command,
+    # its result, and the CLI's own --verbose/--debug output - and at Verbose or Debug the
+    # operator asked to SEE that, so it is echoed to the console as well as filed.
+    if ($Level -eq 'DEBUG' -and $env:AFS_LOG_LEVEL -in @('Verbose', 'Debug')) {
+        Write-Host ("      | " + $Message) -ForegroundColor DarkGray
     }
 }
 
@@ -166,17 +167,24 @@ function Invoke-AfsAz {
     if ($chatter.Count -and $env:AFS_LOG_LEVEL -in @('Verbose', 'Debug')) {
         # the CLI's --verbose/--debug output, kept in the file only
         foreach ($line in ($chatter | Select-Object -First 400)) {
-            if ($line.Trim()) { Write-AfsLog -Level DEBUG -Message ("  cli  " + $line.Trim()) }
+            if ($line.Trim()) { Write-AfsLog -Level DEBUG -Message ("cli  " + $line.Trim()) }
         }
     }
 
     if ($code -ne 0) {
         $err = ($chatter + $stdout | Out-String).Trim()
+        if ($AllowFailure) {
+            # an expected "no" from an existence probe, not a failure - keep it out of ERROR
+            Write-AfsLog -Level DEBUG -Message ("probe " + $shown + " -> exit " + $code + " (tolerated) in " + $sw.ElapsedMilliseconds + " ms") -Data @{
+                exit = $code; ms = $sw.ElapsedMilliseconds; tolerated = $true
+                stderr = $err.Substring(0, [Math]::Min(1000, $err.Length))
+            }
+            return $null
+        }
         Write-AfsLog -Level ERROR -Message ("fail " + $shown + " -> exit " + $code + " in " + $sw.ElapsedMilliseconds + " ms") -Data @{
             exit = $code; ms = $sw.ElapsedMilliseconds
             stderr = $err.Substring(0, [Math]::Min(4000, $err.Length))
         }
-        if ($AllowFailure) { return $null }
         if (Get-Command Show-AzureFailure -ErrorAction SilentlyContinue) {
             Show-AzureFailure -Message $err -Context ("Failed: " + $shown)
         }
@@ -188,4 +196,114 @@ function Invoke-AfsAz {
     $text = ($stdout | Out-String).Trim()
     if (-not $text) { return $null }
     try { return $text | ConvertFrom-Json } catch { return $text }
+}
+
+function Test-AfsServicePrincipal {
+    <#
+      .SYNOPSIS
+        Prove a freshly created service principal can sign in and read its scope - WITHOUT
+        touching the operator's own Azure CLI session.
+
+      .DESCRIPTION
+        "az login --service-principal" replaces the current account in the shared CLI profile,
+        so testing that way logs the human out. This asks Entra for a token directly with the
+        client-credentials grant and then reads the scope over REST with that token.
+
+        A new application, service principal and secret take a while to replicate - typically
+        10 to 60 seconds, occasionally longer - and sign-in fails with AADSTS7000215 or
+        AADSTS700016 until they have. So it retries, and says so, rather than reporting a
+        failure that would have succeeded a minute later.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$TenantId,
+        [Parameter(Mandatory)][string]$AppId,
+        [Parameter(Mandatory)][string]$Secret,
+        [Parameter(Mandatory)][string]$Scope,     # e.g. /subscriptions/<id>/resourceGroups/<rg>
+        [int]$MaxAttempts = 12,
+        [int]$DelaySeconds = 10
+    )
+    $tokenUrl = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token"
+    $body = @{
+        client_id     = $AppId
+        client_secret = $Secret
+        scope         = 'https://management.azure.com/.default'
+        grant_type    = 'client_credentials'
+    }
+    $lastErr = ''
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
+        try {
+            $tok = Invoke-RestMethod -Method Post -Uri $tokenUrl -Body $body -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop
+            if ($tok -and $tok.access_token) {
+                Write-AfsLog -Level DEBUG -Message ("sp token acquired on attempt " + $i)
+                $uri = "https://management.azure.com$Scope" + "?api-version=2022-09-01"
+                try {
+                    $r = Invoke-WebRequest -Method Get -Uri $uri -Headers @{ Authorization = 'Bearer ' + $tok.access_token } -UseBasicParsing -ErrorAction Stop
+                    if ($r.StatusCode -eq 200) {
+                        Write-AfsLog -Level INFO -Message ("service principal " + $AppId + " can read " + $Scope + " (attempt " + $i + ")")
+                        return [pscustomobject]@{ Ok = $true; Attempts = $i; Detail = 'token acquired and scope readable' }
+                    }
+                    $lastErr = "scope read returned HTTP " + $r.StatusCode
+                } catch {
+                    # the token is good but the role has not propagated yet - keep waiting
+                    $lastErr = "scope read failed: " + $_.Exception.Message
+                }
+            }
+        } catch {
+            $lastErr = $_.Exception.Message
+            try {
+                $resp = $_.Exception.Response
+                if ($resp) {
+                    $sr = New-Object IO.StreamReader($resp.GetResponseStream()); $lastErr = $sr.ReadToEnd(); $sr.Close()
+                }
+            } catch { }
+        }
+        Write-AfsLog -Level DEBUG -Message ("sp test attempt " + $i + "/" + $MaxAttempts + " not ready: " + $lastErr.Substring(0, [Math]::Min(160, $lastErr.Length)))
+        if ($i -lt $MaxAttempts) {
+            Write-Host ("      ..    identity not usable yet (attempt " + $i + "/" + $MaxAttempts + ") - waiting " + $DelaySeconds + " s for Entra to replicate") -ForegroundColor DarkGray
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+    Write-AfsLog -Level WARN -Message ("service principal " + $AppId + " still not usable after " + $MaxAttempts + " attempts: " + $lastErr)
+    return [pscustomobject]@{ Ok = $false; Attempts = $MaxAttempts; Detail = $lastErr }
+}
+
+# ---- Progress -------------------------------------------------------------------------
+# A real console progress bar (Write-Progress) plus an inline strip, in the same style as the
+# other operator tools: "[############............]  7/17 steps". Block glyphs are built from
+# char codes so this file stays strictly ASCII. Never written to the log - the STEP line is.
+
+function Write-AfsProgress {
+    param(
+        [Parameter(Mandatory)][string]$Activity,   # stable across a run, e.g. 'Azure File Sync deployment'
+        [Parameter(Mandatory)][string]$Status,     # what is happening right now
+        [int]$Step = -1, [int]$Total = -1,         # determinate bar when both are given
+        [int]$Id = 0
+    )
+    $p = @{ Activity = $Activity; Status = $Status; Id = $Id }
+    if ($Step -ge 0 -and $Total -gt 0) {
+        $pct = [int][Math]::Min(100, [Math]::Max(0, [Math]::Round(($Step / [double]$Total) * 100)))
+        $p.PercentComplete  = $pct
+        $p.CurrentOperation = ("step {0} of {1}  ({2}%)" -f $Step, $Total, $pct)
+    }
+    try { Write-Progress @p } catch { }
+}
+
+function Complete-AfsProgress {
+    param([string]$Activity = 'Working', [int]$Id = 0)
+    try { Write-Progress -Activity $Activity -Id $Id -Completed } catch { }
+}
+
+function Write-AfsPhaseStrip {
+    param([Parameter(Mandatory)][int]$Done, [Parameter(Mandatory)][int]$Total, [int]$Width = 26, [string]$Label = 'steps')
+    if ($Total -le 0) { return }
+    $full  = [string][char]0x2588   # solid block
+    $faint = [string][char]0x2591   # light shade
+    $n = [int][Math]::Round(($Done / [double]$Total) * $Width)
+    if ($n -lt 0) { $n = 0 }; if ($n -gt $Width) { $n = $Width }
+    Write-Host '  ' -NoNewline
+    Write-Host '[' -NoNewline -ForegroundColor DarkCyan
+    if ($n -gt 0) { Write-Host ($full * $n) -NoNewline -ForegroundColor Cyan }
+    if ($n -lt $Width) { Write-Host ($faint * ($Width - $n)) -NoNewline -ForegroundColor DarkGray }
+    Write-Host ']' -NoNewline -ForegroundColor DarkCyan
+    Write-Host ("  {0}/{1} {2}" -f $Done, $Total, $Label) -ForegroundColor DarkGray
 }

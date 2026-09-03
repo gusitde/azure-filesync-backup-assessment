@@ -14,3 +14,4 @@ deploy/inputs.json
 
 # run logs and telemetry written by start.ps1 and the deploy scripts
 logs/
+deploy/deployment-context.json
