@@ -146,6 +146,11 @@ function Invoke-AfsAz {
     $shown = [regex]::Replace($shown, '--claims-challenge\s+"[^"]+"', '--claims-challenge "***"')
 
     $extra = Get-AfsAzVerbosityArgs
+    # the CLI refuses --verbose/--debug alongside --only-show-errors, so a command that asks
+    # for quiet output (sign-in does) must not have verbosity appended
+    if ($Args -contains '--only-show-errors') {
+        $extra = @($extra | Where-Object { $_ -ne '--verbose' -and $_ -ne '--debug' })
+    }
     $all = @($Args) + @($extra)
 
     Write-AfsLog -Level DEBUG -Message ("run  " + $shown)
