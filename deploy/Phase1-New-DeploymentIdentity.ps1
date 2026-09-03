@@ -252,7 +252,9 @@ $context = [ordered]@{
         authMode    = $(if ($Federate) { 'federated' } else { 'clientSecret' })
         scope       = $scope
         role        = $Role
-        secretFile  = $(if ($secret) { Split-Path -Leaf $SecretFile } else { $null })
+        # a re-run that found the identity already there issues no new secret; keep pointing
+        # at the secret file a previous run wrote, so unattended phase 2 still works
+        secretFile  = $(if ($secret) { Split-Path -Leaf $SecretFile } elseif (Test-Path $SecretFile) { Split-Path -Leaf $SecretFile } else { $null })
     }
     config     = $cfg
 }
