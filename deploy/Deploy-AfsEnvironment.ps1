@@ -578,9 +578,11 @@ if ($Backup -and (Get-Prop $Backup 'enabled' $false)) {
 
     # redundancy and cross-region restore must be set before the first protected item
     Write-Step 'Vault redundancy and cross-region restore (must precede any protected item)'
-    $items = Invoke-Az @('backup', 'item', 'list', '-v', $VaultName, '-g', $ResourceGroup, '--query', 'length(@)', '-o', 'tsv') -AllowFailure
-    if ($items -and [int]$items -gt 0) {
-        Write-Warn2 "vault already protects $items item(s) - redundancy can no longer be changed"
+    # JSON list, counted here: 'length(@)' in --query is re-parsed by the az.cmd wrapper on
+    # Windows ("-o was unexpected"), which made this read fail silently and report zero items
+    $items = ConvertTo-Array (Invoke-Az @('backup', 'item', 'list', '-v', $VaultName, '-g', $ResourceGroup, '--query', '[].name', '-o', 'json') -AllowFailure)
+    if ($items.Count -gt 0) {
+        Write-Warn2 "vault already protects $($items.Count) item(s) - redundancy can no longer be changed"
     } elseif (Test-Change $VaultName 'set backup storage redundancy') {
         $redundancy = Get-Prop $Backup 'storageRedundancy' 'GeoRedundant'
         $args = @('backup', 'vault', 'backup-properties', 'set', '-n', $VaultName, '-g', $ResourceGroup,
@@ -593,7 +595,7 @@ if ($Backup -and (Get-Prop $Backup 'enabled' $false)) {
     # properties.storageModelType query silently returns nothing.
     Add-Verification 'vault redundancy' "az backup vault backup-properties show -n $VaultName -g $ResourceGroup --query '[0].properties.storageModelType' -o tsv"
     Add-Verification 'cross-region restore' "az backup vault backup-properties show -n $VaultName -g $ResourceGroup --query '[0].properties.crossRegionRestoreFlag' -o tsv"
-    Add-Verification 'protected item count' "az backup item list -v $VaultName -g $ResourceGroup --query 'length(@)' -o tsv"
+    Add-Verification 'protected items' "az backup item list -v $VaultName -g $ResourceGroup --query '[].properties.friendlyName' -o tsv"
 
     # ---- backup policy. Azure Files backup in a Recovery Services vault is snapshot-based:
     # one daily snapshot, kept N days, item-level restore. The JSON is the shape that
@@ -642,9 +644,11 @@ if ($Backup -and (Get-Prop $Backup 'enabled' $false)) {
     Write-Step 'Protect the file shares'
     # one plain list, counted here: a JMESPath filter with brackets, parentheses and '=='
     # is re-parsed by the az.cmd wrapper on Windows ("-o was unexpected at this time")
+    # JSON, not tsv: a multi-line tsv answer comes back from Invoke-Az as ONE string, so a
+    # two-share list never matched either name and both shares were "protected" twice
     $protected = ConvertTo-Array (Invoke-Az @('backup', 'item', 'list', '-v', $VaultName, '-g', $ResourceGroup,
         '--backup-management-type', 'AzureStorage', '--workload-type', 'AzureFileShare',
-        '--query', '[].properties.friendlyName', '-o', 'tsv') -AllowFailure)
+        '--query', '[].properties.friendlyName', '-o', 'json') -AllowFailure)
     foreach ($s in $Shares) {
         $sn = $s.name
         if ($protected -contains $sn) { Write-Ok "$sn already protected" }

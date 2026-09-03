@@ -263,7 +263,7 @@ if ($vault) {
     foreach ($i in $items) { L ("- ``{0}`` ({1}) - {2}" -f $i.name, $i.type, $i.state) }
     L ''
     V 'vault redundancy + CRR' "az backup vault backup-properties show -n $($cfg.vaultName) -g $rg --query '[0].properties.[storageModelType,crossRegionRestoreFlag]' -o tsv"
-    V 'protected items' "az backup item list -v $($cfg.vaultName) -g $rg --query 'length(@)' -o tsv"
+    V 'protected items' "az backup item list -v $($cfg.vaultName) -g $rg --query '[].properties.friendlyName' -o tsv"
 } else { L '_No Recovery Services vault in this deployment._'; L '' }
 
 # --------------------------------------------------------------- identity ---

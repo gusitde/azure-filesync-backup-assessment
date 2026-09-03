@@ -210,9 +210,11 @@ if ($Federate) {
 Write-Step "Granting $Role on the resource group, not the subscription"
 if ($appId -and $PSCmdlet.ShouldProcess($scope, "grant $Role")) {
     $spOid = Invoke-Az @('ad', 'sp', 'show', '--id', $appId, '--query', 'id', '-o', 'tsv') -AllowFailure
+    # a filter is fine, a function call is not: 'length(...)' breaks the az.cmd wrapper on
+    # Windows (the ')' ends one of its blocks), so the read fails and the grant is repeated
     $have = Invoke-Az @('role', 'assignment', 'list', '--assignee', $appId, '--scope', $scope,
-        '--query', "length([?roleDefinitionName=='$Role'])", '-o', 'tsv') -AllowFailure
-    if ($have -and [int]$have -gt 0) {
+        '--query', "[?roleDefinitionName=='$Role'].id", '-o', 'json') -AllowFailure
+    if ($have) {
         Write-Ok 'already granted'
     } else {
         # a role assignment for a just-created principal can fail with PrincipalNotFound until

@@ -27,6 +27,28 @@
 Set-StrictMode -Version 2.0
 
 $script:AfsLogRank = @{ DEBUG = 10; INFO = 20; STEP = 25; WARN = 30; ERROR = 40 }
+$script:AfsAzLauncher = $null
+
+function Get-AfsAzLauncher {
+    <# How to start the Azure CLI. The Windows MSI install's az.cmd is one batch block:
+         IF EXIST "..\python.exe" ( "..\python.exe" -IBm azure.cli %* ) ELSE ( ... )
+       so a ')' inside ANY argument - every JMESPath function call has one: length(@),
+       contains(...), join(...) - closes that block early and the command dies with
+       "-o was unexpected at this time" (exit 255). Two live-run steps read nothing because of
+       it. Calling the bundled python directly skips the batch layer; any other install
+       (az.exe, pip, Linux, macOS) is used as found. Resolved once per process. #>
+    if ($script:AfsAzLauncher) { return $script:AfsAzLauncher }
+    $exe = 'az'; $prefix = @()
+    try {
+        $cmd = Get-Command az -ErrorAction Stop | Select-Object -First 1
+        if ($cmd.Source -and $cmd.Source -like '*.cmd') {
+            $py = Join-Path (Split-Path -Parent (Split-Path -Parent $cmd.Source)) 'python.exe'
+            if (Test-Path $py) { $exe = $py; $prefix = @('-IBm', 'azure.cli'); $env:AZ_INSTALLER = 'MSI' }
+        }
+    } catch { }
+    $script:AfsAzLauncher = @{ Exe = $exe; Prefix = $prefix }
+    return $script:AfsAzLauncher
+}
 
 function Get-AfsLogDirectory {
     # <repo>/logs - this file lives in <repo>/deploy
@@ -171,7 +193,9 @@ function Invoke-AfsAz {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $out = & az @all 2>&1
+        $launcher = Get-AfsAzLauncher
+        $argv = @($launcher.Prefix) + @($all)
+        $out = & $launcher.Exe @argv 2>&1
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $prev

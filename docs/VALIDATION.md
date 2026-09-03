@@ -60,6 +60,49 @@ yields one element containing the array. The teardown's safety inventory reporte
 for a group holding two, and concatenated their names. Fixed with an explicit normaliser and
 re-verified against a real group.
 
+**6. The normaliser itself had a one-element hole.** `return $array` hands the array to the
+pipeline, which unwraps a one-element array back to its scalar - and a `PSCustomObject` has
+no `.Count`. The as-built reported the deployment identity's single role assignment as
+"not readable" for exactly that reason. `return ,$array` fixes it, in all four copies.
+
+**7. `dns-zone-group show` answers `{}` with exit code 0 when nothing is attached.** The
+first live build tested the exit code, believed the zone group existed, and never wrote an
+A record: both privatelink zones held only their SOA, and the private endpoints resolved
+publicly. The test is now for an actual zone configuration, and the as-built lists the
+records so the gap is visible.
+
+**8. The Windows `az.cmd` wrapper cannot carry a `)` in any argument.** The MSI install's
+launcher is a single batch block, `@IF EXIST "..\python.exe" ( ... -IBm azure.cli %* )`, so
+a closing parenthesis inside an argument ends the block early and the command dies with
+`-o was unexpected at this time` (exit code 255). Every JMESPath function call has one:
+`length(@)`, `contains(...)`, `join(...)`. A tolerated read then returns nothing, which is
+how the redundancy step saw zero protected items, the wizard's read-back probe accused a
+working account of having no access, and phase 1 re-granted a role it had already granted.
+Filters such as `[?name=='x']` are unaffected, and the same commands work from Git Bash or
+Linux, which is why it survived earlier testing. `Invoke-AfsAz` now starts the bundled
+`python.exe -IBm azure.cli` directly when it finds that layout, and the scripts read lists
+and count in PowerShell. The 28 gate checks in the codex that use `length(...)` are correct
+as written for bash; a Windows PowerShell operator must run them through a wrapper that
+avoids `az.cmd` or count a plain list instead.
+
+**9. A multi-line `-o tsv` answer is one string.** `Invoke-AfsAz` returns non-JSON output
+as a single string, so a two-share list never matched either name and both shares were
+"protected" a second time (Azure treats that as a no-op). Lists are now read as JSON.
+
+**10. The Azure CLI's default subscription is shared by every window on the machine.** An
+`az login` in a second PowerShell window during a build retargeted the very next call to a
+different subscription, and a share lost its protection step to `ResourceGroupNotFound`.
+Every call is now pinned with `--subscription`.
+
+**11. A dot-sourced script with a `param` block binds those parameters in the caller's
+scope.** The HTML renderer blanked the assessor's `$OutputPath` that way, and the report
+failed with "parameter 'Path' is an empty string". The renderer is a param-less library now.
+
+**12. The vault could not be deleted after protection was removed.** Soft delete keeps the
+removed backup data for its retention period (14 days here, and `AlwaysON` where a policy
+enforces it, which cannot be switched off). The teardown now detects the blocked vault,
+removes every other resource individually, and prints the date it can be retried.
+
 ## The three read-only checks that did not pass
 
 Two were defects in the test, not the library, and are recorded rather than hidden:

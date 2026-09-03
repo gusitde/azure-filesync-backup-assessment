@@ -291,7 +291,11 @@ Access Administrator on the subscription." `
 
         # a read here is worth more than a promise later: if the account cannot see the
         # resource groups, it has no Azure role and phase 1 will fail at the first write.
-        $probe = Invoke-Cli @('group', 'list', '--subscription', $subId, '--query', 'length(@)', '-o', 'tsv') -AllowFailure
+        # 'length(@)' is NOT usable here: on Windows the ')' breaks the az.cmd wrapper and the
+        # read fails, which made this probe accuse a perfectly good account of having no
+        # access. A provider read needs a real Azure role (Reader or above) and always
+        # returns a value when it succeeds, even in an empty subscription.
+        $probe = Invoke-Cli @('provider', 'show', '-n', 'Microsoft.Resources', '--subscription', $subId, '--query', 'namespace', '-o', 'tsv') -AllowFailure
         if ($null -eq $probe) {
             Write-Host ''
             Write-Bad 'this account can sign in, but cannot read that subscription.'
