@@ -90,6 +90,20 @@ address. Also used to reverse that.
    `named.conf`, so it silently does nothing and queries go to the root servers. Each
    `forward_to` entry needs both `address` and `name`.
 
+   **Leave "Use Forwarders Only" unticked for these zones** - and the reason is specific to
+   them. Ticking it removes the fallback to root hints. For an *internal* namespace that
+   fallback is worthless anyway (resolving from root cannot find a private name), which is why
+   internal forward zones are normally set forward-only. But `file.core.windows.net` and
+   `afs.azure.net` are **public** names: falling back to root returns the public address, which
+   is exactly the behaviour you had before the change. So for these two zones the unticked
+   setting is a real safety net, not a leak.
+
+   Field naming differs by level, which catches people extending automation: the forward zone
+   uses **`forwarders_only`**, while grid, member and view objects use **`forward_only`**.
+   Ordering of `forward_to` entries carries no operational weight in NIOS 9.0 - selection is by
+   round-trip time - so do not build ordering logic. Infoblox has never published what a
+   *per-zone* forward zone does when its forwarder is unreachable; treat that as untested.
+
 7. **Clear the cache, in both directions.** After adding the forwarder the server still holds
    the public addresses it looked up earlier and will serve them until they expire. After
    removing it, it holds private addresses that clients may no longer be able to route to.
