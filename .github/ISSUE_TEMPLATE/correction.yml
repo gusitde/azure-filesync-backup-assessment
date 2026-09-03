@@ -1,0 +1,53 @@
+name: Correction - something here is wrong
+description: A command, parameter, limit, zone name or stated constraint does not match how Azure actually behaves.
+title: "[correction] "
+labels: ["correction"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every technical claim in this library is meant to be traceable to Microsoft's own
+        documentation. If one is wrong, that is a defect and we want to fix it.
+
+  - type: input
+    id: where
+    attributes:
+      label: Which document
+      description: File path, and the heading or step number if you have it.
+      placeholder: codex/playbook-enable-azure-backup-for-file-shares.md, step 4
+    validations:
+      required: true
+
+  - type: textarea
+    id: claim
+    attributes:
+      label: What it currently says
+      description: Paste the exact text, command or value.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong with it
+      description: What happens if someone follows it as written?
+    validations:
+      required: true
+
+  - type: input
+    id: evidence
+    attributes:
+      label: Evidence
+      description: A link to the Microsoft documentation that shows the correct behaviour, if you have one.
+      placeholder: https://learn.microsoft.com/...
+    validations:
+      required: false
+
+  - type: textarea
+    id: correction
+    attributes:
+      label: What it should say
+      description: The corrected command, value or wording, if you know it.
+    validations:
+      required: false

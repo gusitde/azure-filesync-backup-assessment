@@ -1,0 +1,47 @@
+name: Gap - this does not cover my situation
+description: A scenario, failure mode or decision the library should cover and does not.
+title: "[gap] "
+labels: ["gap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gaps are the most useful thing you can report. The library grows from real situations
+        people hit, not from a table of contents someone imagined up front.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of gap
+      options:
+        - A target state that is not described (would be a blueprint)
+        - A task with no step-by-step procedure (would be a playbook)
+        - A failure with no recovery procedure (would be a runbook)
+        - A decision with no guidance on how to make it
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: situation
+    attributes:
+      label: The situation
+      description: What are you trying to do, or what broke? Concrete beats general.
+    validations:
+      required: true
+
+  - type: textarea
+    id: looked
+    attributes:
+      label: Where you looked
+      description: Which documents you checked before concluding it was not covered. This helps us find out whether it is genuinely missing or just hard to find.
+    validations:
+      required: false
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Anything unusual about your environment
+      description: Private endpoints only, ExpressRoute, a regulatory retention obligation, a DNS product, an identity model - whatever would change the answer.
+    validations:
+      required: false

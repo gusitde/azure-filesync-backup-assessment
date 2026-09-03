@@ -152,6 +152,21 @@ as errors, and all 62 were corrected. The codex validator reports 20/20 entries 
 pinned module number should be re-verified before being quoted to a customer more than a
 quarter from now.
 
+**What "verified" means here, precisely.** Commands and constraints are checked against
+Microsoft's published documentation. They are **not yet execution-tested** against a live
+subscription. That distinction is deliberate and stated rather than glossed: a documented
+parameter can still be wrong for your API version, your region or your resource state. Treat
+every mutating command as something to rehearse in a scratch resource group before running it
+somewhere that matters, and tell us when one does not behave as written - see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Contributing
+
+Corrections and gaps are both welcome, and neither needs write access. A wrong command is
+found the first time someone runs it; a missing runbook is found at 2am during an incident, so
+gap reports are the more valuable of the two. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+issue templates, the three house rules for edits, and where a new document belongs.
+
 ## Tests
 
 ```powershell
