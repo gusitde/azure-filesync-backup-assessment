@@ -1,0 +1,47 @@
+{
+  // ---- CONFIRM THESE FOUR THINGS, THEN RUN PHASE 1 -----------------------
+  // Pre-filled from what is known about this tenant. Check the three marked
+  // CONFIRM; everything else is derived.
+
+  // 1. Entra global administrator - used by PHASE 1 ONLY.
+  "entraGlobalAdmin": {
+    "userPrincipalName": "usper-admin@worldaicorp.org",
+    "tenantId": "11b44c5d-c0e8-42cd-bb53-dd6fe967f68a"
+  },
+
+  // 2. Where to build it.
+  //    CONFIRM: subscription. "Landing Zone" is pre-selected as the natural
+  //    target; swap the id if you want a different one.
+  "azure": {
+    "subscriptionId": "1606a25b-7dc0-4d05-a6c0-cb29313bbb4c",
+    "location": "eastus",
+    "namePrefix": "wai",
+    "uniqueSuffix": "01"
+  },
+
+  // 3. The AD account that will domain-join the storage account.
+  //    CONFIRM: this account must be able to CREATE an object in the OU below.
+  //    It does not need Domain Admin. You are prompted for the password.
+  "activeDirectoryAdmin": {
+    "userPrincipalName": "administrator@worldai.local",
+    "passwordSource": "prompt"
+  },
+
+  // 4. AD basics.
+  //    CONFIRM: the OU must exist before the join runs.
+  "activeDirectory": {
+    "domainFqdn": "worldai.local",
+    "netBiosName": "WORLDAI",
+    "organizationalUnitDistinguishedName": "OU=AzureFiles,OU=Servers,DC=worldai,DC=local",
+    "identityObjectType": "ComputerAccount",
+    "domainControllerOrSite": ""
+  },
+
+  // ---- first run: leave the AD join off until the storage side is up -----
+  // Turn it on once the share exists and you are running from a domain-joined
+  // machine with AzFilesHybrid installed.
+  "overrides": {
+    "enableAdDsJoin": false,
+    "backupDailyRetentionDays": 60
+  }
+}
