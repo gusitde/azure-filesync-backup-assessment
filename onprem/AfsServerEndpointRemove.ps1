@@ -110,7 +110,13 @@ if ($UninstallAgent) {
                 Get-ItemProperty | Where-Object { $_.DisplayName -like '*Storage Sync Agent*' -or $_.DisplayName -like '*Azure File Sync*' } | Select-Object -First 1
             if (-not $p) { return 'not installed' }
             $proc = Start-Process msiexec.exe -ArgumentList ('/x ' + $p.PSChildName + ' /qn /norestart') -Wait -PassThru
-            return ('msiexec exit ' + $proc.ExitCode)
+            # 0 is done, 3010 is done but Windows wants a restart to finish releasing the
+            # filter driver. Both are success; anything else is not.
+            switch ($proc.ExitCode) {
+                0     { return 'uninstalled' }
+                3010  { return 'uninstalled - the server needs a restart to finish removing the file system filter' }
+                default { return ('msiexec failed with exit code ' + $proc.ExitCode) }
+            }
         }
         Write-AfsOk ('agent uninstall: ' + $r)
     }

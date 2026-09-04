@@ -495,6 +495,20 @@ can be copied from the sample."
         Write-Title 'Deployment settings'
         Write-Explain "Anything marked (derived) follows from the name prefix. Change the prefix and
 they move together; set one explicitly and it stops following."
+        # These settings are read when phase 1 writes the deployment context. A build or
+        # a resume that runs FROM an existing context uses what was captured then, so an
+        # edit here would otherwise appear to do nothing at all.
+        if (Test-Path $script:ContextFile) {
+            $existing = $null
+            try { $existing = Read-AfsJsonc -Path $script:ContextFile } catch { }
+            if ($existing -and $resolved -and $existing.config.resourceGroup -ne $resolved.resourceGroup) {
+                Write-Host ''
+                Write-Note ('the saved deployment still points at ' + $existing.config.resourceGroup + ', not ' + $resolved.resourceGroup + '.')
+                Write-Explain "Phase 1 captured those names when it ran. Build re-runs phase 1 and picks
+these up; Resume deliberately does not, because it exists to continue the
+deployment that was already started."
+            }
+        }
         Write-Host ''
         foreach ($g in $groups) {
             Write-Host ('  ' + $g) -ForegroundColor White
