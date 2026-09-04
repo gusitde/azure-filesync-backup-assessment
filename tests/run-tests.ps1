@@ -134,6 +134,24 @@ foreach ($name in $splatted) {
 Check ($bad.Count -eq 0) "no splatted variable is built as an array of switch names$(if ($bad.Count) { ' -> ' + ($bad -join '; ') })"
 Check ($splatted -notcontains 'args') 'nothing splats $args (an automatic variable)'
 
+# -- 4b. no customer name is baked into the rules ----------------------------------------------
+# Six rule recommendations hardcoded "Contoso", so EVERY customer's report told them to align
+# retention with Contoso's records schedule. The rules now carry a {customer} token that is
+# substituted once at the catalog. Two things must hold: no example name survives in the rule
+# text, and no token survives into the output.
+Write-Host '4b. customer name is not baked in'
+$nwDir = Join-Path $tmp 'named'
+& $assess -ExportPath $fixture -OutputPath $nwDir -CustomerName 'Northwind Traders' | Out-Null
+$nwMd = Get-Content (Join-Path $nwDir 'assessment.md') -Raw
+$nwHtml = Get-Content (Join-Path $nwDir 'assessment.html') -Raw
+Check (([regex]::Matches($nwMd, 'Contoso (AD DS|policy|file data|records)')).Count -eq 0) 'no rule recommendation names another customer'
+Check (-not ($nwMd -like '*{customer}*')) 'no {customer} token survives into the markdown'
+Check (-not ($nwHtml -like '*{customer}*')) 'no {customer} token survives into the HTML'
+Check (([regex]::Matches($nwMd, 'Northwind Traders (AD DS|policy|file data|records)')).Count -ge 4) 'the rules speak of the customer actually being assessed'
+# and the catalog itself, which is rendered into the Rules tab
+$catOut = & $assess -ListRules
+Check ((($catOut -join "`n") -notmatch 'Contoso (AD DS|policy|file data|records)')) 'the rule catalog carries no customer name either'
+
 # -- 5a. the subject tabs ----------------------------------------------------------------------
 # Each subject tab renders the estate itself, not the findings. Two things must hold: they all
 # appear and none throws (a thrown tab is caught and replaced with an apology, which is exactly
