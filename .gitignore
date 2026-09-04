@@ -24,3 +24,9 @@ as-built/
 .pwsh7/
 .azgovviz/
 governance/
+
+# The assessor defaults its output to the export folder, so assessing the fixture
+# in place drops reports into a tracked directory. Keep the fixture pristine.
+fixtures/**/assessment.md
+fixtures/**/assessment.html
+fixtures/**/findings.json
