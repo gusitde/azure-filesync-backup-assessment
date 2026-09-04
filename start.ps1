@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
-  Guided start. Asks what you want to do, checks your prerequisites, asks the questions it
-  needs, and runs the right scripts in the right order.
+  Luca Az-Deploy plus - the guided front door. Asks what you want to do, checks your
+  prerequisites, asks the questions it needs, and runs the right scripts in the right order.
 
 .DESCRIPTION
   This is the front door. You should not need to read anything else to get going.
@@ -43,8 +43,8 @@ function Write-Rule { Write-Host ('-' * 74) -ForegroundColor DarkGray }
 function Write-Banner {
     if ($Host.UI.RawUI -and -not [Console]::IsOutputRedirected) { Clear-Host }
     Write-Host ''
-    Write-Host '  Azure File Sync + Azure Backup' -ForegroundColor White
-    Write-Host '  assessment and deployment kit' -ForegroundColor White
+    Write-Host '  Luca Az-Deploy plus' -ForegroundColor White
+    Write-Host '  Azure File Sync and Azure Backup - assess, build, connect' -ForegroundColor DarkGray
     Write-Host ''
     Write-Rule
 }

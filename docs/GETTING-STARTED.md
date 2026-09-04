@@ -4,6 +4,10 @@ A complete walk-through: what to install, how to sign in, and how to run each sc
 for someone who has not seen this repository before. Every version and error message here came
 from actually running it, not from a specification.
 
+**If you would rather be led through it**, run `.\start.ps1` - *Luca Az-Deploy plus*. It does
+the prerequisite checks in section 2, the sign-in in section 3, and then whichever of the
+flows below you pick, always with a dry run first.
+
 ---
 
 ## 1. What you need before you start
