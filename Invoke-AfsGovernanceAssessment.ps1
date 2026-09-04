@@ -84,6 +84,7 @@ $script:StepNo = 0
 $script:StepTotal = 6
 function Write-GovStep {
     param([string]$T)
+    Write-AfsStepTimer -Label $T
     $script:StepNo++
     Write-AfsLog -Level STEP -Message ('[' + $script:StepNo + '] ' + $T)
     Write-Host ''
@@ -315,6 +316,7 @@ if ($produced.Count) {
 Write-GovStep 'Where it fits'
 
 Complete-AfsProgress -Activity 'Governance assessment'
+Write-AfsRunSummary -Outcome $(if ($WhatIfPreference) { 'what-if' } else { 'assessed' })
 Write-Host ''
 Write-AfsPhaseStrip -Done $script:StepTotal -Total $script:StepTotal
 Write-Host '======================================' -ForegroundColor White

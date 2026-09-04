@@ -46,6 +46,7 @@ $script:StepTotal = 4
 $script:ProgressActivity = 'Teardown'
 function Write-Step {
     param([string]$T)
+    Write-AfsStepTimer -Label $T
     $script:StepNo++
     Write-AfsLog -Level STEP -Message ('[' + $script:StepNo + '/' + $script:StepTotal + '] ' + $T)
     Write-Host ''

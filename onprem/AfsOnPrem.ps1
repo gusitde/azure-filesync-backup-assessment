@@ -392,6 +392,7 @@ function Set-AfsStepTotal { param([int]$Total, [string]$Activity) $script:AfsSte
 
 function Write-AfsStep {
     param([string]$Text)
+    Write-AfsStepTimer -Label $Text
     $script:AfsStepNo++
     Write-AfsLog -Level STEP -Message ('[' + $script:AfsStepNo + '] ' + $Text)
     Write-Host ''
@@ -403,6 +404,7 @@ function Write-AfsStep {
 function Complete-AfsSteps {
     param([string]$Outcome)
     Complete-AfsProgress -Activity $script:AfsActivity
+    Write-AfsRunSummary -Outcome $Outcome
     Write-Host ''
     Write-AfsPhaseStrip -Done $script:AfsStepTotal -Total $script:AfsStepTotal
     Write-Host '======================================' -ForegroundColor White

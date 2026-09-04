@@ -77,6 +77,7 @@ $script:StepTotal = 17
 $script:ProgressActivity = 'Azure File Sync deployment'
 function Write-Step {
     param([string]$Text)
+    Write-AfsStepTimer -Label $Text
     $script:StepNo++
     Write-AfsLog -Level STEP -Message ('[' + $script:StepNo + '] ' + $Text)
     Write-Host ''
@@ -680,6 +681,7 @@ if ($Pl -and (Get-Prop $Pl 'disableStoragePublicAccess' $false)) {
 # ----------------------------------------------------------------- summary ---
 
 Complete-AfsProgress -Activity $script:ProgressActivity
+Write-AfsRunSummary -Outcome $(if ($WhatIfPreference) { 'what-if' } else { 'deployed' })
 Write-Host ''
 Write-AfsPhaseStrip -Done $script:StepTotal -Total $script:StepTotal
 Write-Host '======================================' -ForegroundColor White

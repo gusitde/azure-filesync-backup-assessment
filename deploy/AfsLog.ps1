@@ -12,12 +12,18 @@
   how chatty the Azure CLI is asked to be:
     Quiet    console shows WARN and ERROR only          az: --only-show-errors
     Normal   console shows what the scripts print       az: default
-    Verbose  same console, az adds --verbose            az: --verbose  (request/response summary)
-    Debug    console adds DEBUG lines, az adds --debug  az: --debug    (full HTTP traces)
+    Verbose  adds every command WE run and its result   az: --verbose
+    Debug    adds the CLI's own output as well          az: --debug    (full HTTP traces)
 
-  The Azure CLI writes its --verbose/--debug chatter to stderr. It is captured and written to
-  the log file at DEBUG, never to the console, so a Debug run stays readable on screen while
-  the log holds the full trace.
+  The difference between Verbose and Debug is the one that matters in practice. Verbose shows
+  what this kit did - the command, the exit code, how long it took. Debug also shows what the
+  Azure CLI said while doing it, which runs to hundreds of lines per call and buries the steps
+  it is meant to explain. Both are written to the log file in full either way; the level only
+  decides what reaches the screen.
+
+  Each step is timed. The elapsed time prints under the step it belongs to, and a run ends with
+  a total and the three steps that cost the most. Set AFS_STEP_PAUSE to a number of seconds to
+  slow a run down for a demo; it is off by default.
 
   Everything is exported through environment variables (AFS_LOG_FILE, AFS_LOG_JSONL,
   AFS_LOG_LEVEL) so a script launched by the wizard writes into the same run's files, and a
@@ -124,7 +130,13 @@ function Write-AfsLog {
     # its result, and the CLI's own --verbose/--debug output - and at Verbose or Debug the
     # operator asked to SEE that, so it is echoed to the console as well as filed.
     if ($Level -eq 'DEBUG' -and $env:AFS_LOG_LEVEL -in @('Verbose', 'Debug')) {
-        Write-Host ("      | " + $Message) -ForegroundColor DarkGray
+        # Verbose means "show me what this script is doing" - the commands it runs and how
+        # they came back. It does not mean "show me the Azure CLI's internal commentary",
+        # which is hundreds of lines per call and buries the steps. That stays in the file,
+        # where it is wanted, and only Debug puts it on screen as well.
+        if ($env:AFS_LOG_LEVEL -eq 'Debug' -or $Message -notlike 'cli  *') {
+            Write-Host ("      | " + $Message) -ForegroundColor DarkGray
+        }
     }
 }
 
@@ -312,6 +324,63 @@ function Test-AfsServicePrincipal {
 # A real console progress bar (Write-Progress) plus an inline strip, in the same style as the
 # other operator tools: "[############............]  7/17 steps". Block glyphs are built from
 # char codes so this file stays strictly ASCII. Never written to the log - the STEP line is.
+
+$script:AfsStepClock = $null
+$script:AfsStepLabel = $null
+$script:AfsRunClock  = $null
+$script:AfsStepTimes = New-Object System.Collections.ArrayList
+
+function Format-AfsDuration {
+    param([TimeSpan]$Span)
+    if ($Span.TotalSeconds -lt 1)  { return ('{0:N0} ms' -f $Span.TotalMilliseconds) }
+    if ($Span.TotalSeconds -lt 90) { return ('{0:N1} s' -f $Span.TotalSeconds) }
+    return ('{0:N0} m {1:00} s' -f [math]::Floor($Span.TotalMinutes), $Span.Seconds)
+}
+
+function Write-AfsStepTimer {
+    <#  Called by each script's step function BEFORE it prints its own header, so the line
+        lands under the step that just finished rather than the one about to start. Without
+        this a run is a wall of steps with no sense of which one cost the time. #>
+    param([string]$Label)
+    $now = Get-Date
+    if (-not $script:AfsRunClock) { $script:AfsRunClock = $now }
+    if ($script:AfsStepLabel) {
+        $d = $now - $script:AfsStepClock
+        [void]$script:AfsStepTimes.Add([pscustomobject]@{ Step = $script:AfsStepLabel; Span = $d })
+        Write-AfsLog -Level INFO -Message ('step done: ' + $script:AfsStepLabel + ' in ' + (Format-AfsDuration $d))
+        Write-Host ('            ' + (Format-AfsDuration $d)) -ForegroundColor DarkGray
+    }
+    $script:AfsStepLabel = $Label
+    $script:AfsStepClock = $now
+    # A demo needs time to read what just happened; automation does not. Off unless asked.
+    if ($env:AFS_STEP_PAUSE) {
+        $p = 0.0
+        if ([double]::TryParse($env:AFS_STEP_PAUSE, [ref]$p) -and $p -gt 0) { Start-Sleep -Milliseconds ([int]($p * 1000)) }
+    }
+}
+
+function Write-AfsRunSummary {
+    <# Close the last step and say where the time actually went. #>
+    param([string]$Outcome)
+    $now = Get-Date
+    if ($script:AfsStepLabel) {
+        $d = $now - $script:AfsStepClock
+        [void]$script:AfsStepTimes.Add([pscustomobject]@{ Step = $script:AfsStepLabel; Span = $d })
+        Write-AfsLog -Level INFO -Message ('step done: ' + $script:AfsStepLabel + ' in ' + (Format-AfsDuration $d))
+        Write-Host ('            ' + (Format-AfsDuration $d)) -ForegroundColor DarkGray
+        $script:AfsStepLabel = $null
+    }
+    if (-not $script:AfsRunClock) { return }
+    $total = $now - $script:AfsRunClock
+    Write-AfsLog -Level INFO -Message ('run finished in ' + (Format-AfsDuration $total) + $(if ($Outcome) { ' - ' + $Outcome } else { '' }))
+    Write-Host ''
+    Write-Host ('  Took ' + (Format-AfsDuration $total) + ' in total.') -ForegroundColor White
+    $slow = @($script:AfsStepTimes | Sort-Object { $_.Span.TotalSeconds } -Descending | Select-Object -First 3 | Where-Object { $_.Span.TotalSeconds -ge 1 })
+    if ($slow.Count) {
+        Write-Host '  Where it went:' -ForegroundColor DarkGray
+        foreach ($x in $slow) { Write-Host ('    ' + (Format-AfsDuration $x.Span).PadLeft(9) + '  ' + $x.Step) -ForegroundColor DarkGray }
+    }
+}
 
 function Write-AfsProgress {
     param(
