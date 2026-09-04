@@ -134,6 +134,44 @@ foreach ($name in $splatted) {
 Check ($bad.Count -eq 0) "no splatted variable is built as an array of switch names$(if ($bad.Count) { ' -> ' + ($bad -join '; ') })"
 Check ($splatted -notcontains 'args') 'nothing splats $args (an automatic variable)'
 
+# -- 5c. the assessment-results flow ----------------------------------------------------------
+# The tab list is read out of the report so it cannot drift. `return ,$x` emits the array as ONE
+# object, so a caller that also wraps in @() gets Count=1 and silently flattens every field -
+# that bug shipped once already today. Assert against a report generated right here.
+Write-Host '5c. assessment results'
+$rptDir = Join-Path $tmp 'rpt'
+& $assess -ExportPath $fixture -OutputPath $rptDir -CustomerName 'Fixture Contoso' | Out-Null
+$wizSrc2 = Get-Content (Join-Path $repo 'start.ps1') -Raw
+$fnSrc = $wizSrc2.Substring($wizSrc2.IndexOf('function Get-AfsReportTabs'))
+$fnSrc = $fnSrc.Substring(0, $fnSrc.IndexOf('function Invoke-AssessmentResultsFlow'))
+Invoke-Expression $fnSrc
+$rtabs = Get-AfsReportTabs -Path (Join-Path $rptDir 'assessment.html')
+Check ($rtabs.Count -ge 6) "the report's tabs are read back individually (got $($rtabs.Count), expected 6 or more)"
+Check (@($rtabs | Where-Object { $_.Id -eq 'findings' }).Count -eq 1) 'the findings tab is found by id'
+Check (@($rtabs | Where-Object { -not $_.Id -or -not $_.Label }).Count -eq 0) 'every tab has both an id and a label'
+Check (@($rtabs | Where-Object { $_.Id -match '\s' }).Count -eq 0) 'no id is a flattened concatenation of several ids'
+Check ($wizSrc2 -like '*function Invoke-AssessmentResultsFlow*') 'the assessment-results flow exists'
+Check ($wizSrc2 -like '*See the assessment results*') 'the menu offers it'
+
+# -- 5d. the menu and its dispatch agree -------------------------------------------------------
+# Two renumberings in one day. A menu whose options and switch branches drift sends an operator
+# to the wrong flow - and one of the entries is "Remove an environment".
+Write-Host '5d. menu wiring'
+$menu = [regex]::Match($wizSrc2, "Read-Choice -Question 'What would you like to do\?' -Options @\((.*?)\)\s*\}\s*catch", 'Singleline')
+Check $menu.Success 'the main menu block was found'
+if ($menu.Success) {
+    $optCount = ([regex]::Matches($menu.Groups[1].Value, "(?m)^\s*'")).Count
+    # Anchor to the switch that FOLLOWS the main menu - there are other `switch ($c)` blocks
+    # earlier in the file (Open-Target, the on-premises flow) and Match would find those first.
+    $after = $wizSrc2.Substring($menu.Index)
+    $sw = [regex]::Match($after, 'switch \(\$c\) \{(.*?)
+        \}', 'Singleline')
+    $branches = @([regex]::Matches($sw.Groups[1].Value, '(?m)^\s{12}(\d+) \{') | ForEach-Object { [int]$_.Groups[1].Value })
+    Check ($optCount -gt 0 -and $branches.Count -eq $optCount) "every menu option has a switch branch ($($branches.Count) branches for $optCount options)"
+    $expected = 0..($optCount - 1)
+    Check ((@(Compare-Object $expected $branches -SyncWindow 0)).Count -eq 0) 'the branch indices are 0..n-1 with no gaps or duplicates'
+}
+
 # -- 6. the wizard still parses ----------------------------------------------------------------
 Write-Host '6. wizard'
 $perr = $null

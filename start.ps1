@@ -833,6 +833,133 @@ function Get-AfsReports {
 }
 
 
+function Get-AfsAssessmentReports {
+    <# Every assessment.html we can find, newest first, with whatever the file can tell us
+       about itself. Reports are generated output and may sit anywhere the operator chose. #>
+    $found = @()
+    foreach ($dir in @($script:Root, (Join-Path $script:Root 'assessment-latest'))) {
+        if (-not (Test-Path $dir)) { continue }
+        $found += @(Get-ChildItem -Path $dir -Filter 'assessment.html' -File -Recurse -Depth 3 -ErrorAction SilentlyContinue)
+    }
+    $out = @()
+    foreach ($f in ($found | Sort-Object FullName -Unique | Sort-Object LastWriteTime -Descending)) {
+        # The customer name is in the <h1>; reading it beats making the operator guess from a path.
+        $customer = ''
+        try {
+            $head = Get-Content $f.FullName -TotalCount 60 -ErrorAction SilentlyContinue
+            $m = [regex]::Match(($head -join "`n"), '<h1>[^<]*assessment - ([^<]+)</h1>')
+            if ($m.Success) { $customer = $m.Groups[1].Value.Trim() }
+        } catch { }
+        $out += [pscustomobject]@{ File = $f; Customer = $customer }
+    }
+    return ,$out
+}
+
+function Get-AfsReportTabs {
+    <# Read the tabs out of the report itself rather than hard-coding a list here. A report
+       generated before a tab existed still opens correctly, and adding a tab to the renderer
+       needs no change in the wizard. #>
+    param([Parameter(Mandatory)][string]$Path)
+    $tabs = @()
+    try {
+        $html = Get-Content $Path -Raw -ErrorAction Stop
+        $nav = [regex]::Match($html, '<nav class="tabs">(.*?)</nav>', 'Singleline')
+        if (-not $nav.Success) { return ,$tabs }
+        foreach ($m in [regex]::Matches($nav.Groups[1].Value, '<button[^>]*data-tab="([a-z0-9-]+)"[^>]*>(.*?)</button>', 'Singleline')) {
+            $id = $m.Groups[1].Value
+            # strip the count badge and any markup to get the visible label
+            $label = [regex]::Replace($m.Groups[2].Value, '<[^>]+>', ' ')
+            $label = ([regex]::Replace($label, '\s+', ' ')).Trim()
+            $tabs += [pscustomobject]@{ Id = $id; Label = $label }
+        }
+    } catch { }
+    return ,$tabs
+}
+
+function Invoke-AssessmentResultsFlow {
+    <# Menu entry: go straight to the assessment results, and to the part of them you want. #>
+    Write-Title 'Assessment results'
+
+    $reports = Get-AfsAssessmentReports
+    if ($reports.Count -eq 0) {
+        Write-Note 'no assessment has been run yet.'
+        Write-Explain "Run 'Assess an existing environment' first. It exports the configuration
+read-only, assesses it, and writes assessment.html beside the export."
+        return
+    }
+
+    $report = $reports[0]
+    if ($reports.Count -gt 1) {
+        $labels = @()
+        foreach ($r in $reports) {
+            $who = if ($r.Customer) { $r.Customer } else { '(no customer name)' }
+            $labels += ("{0}  {1}`n         {2}" -f $r.File.LastWriteTime.ToString('yyyy-MM-dd HH:mm'), $who,
+                        $r.File.FullName.Substring($script:Root.Length + 1))
+        }
+        $labels += 'Back'
+        $c = Read-Choice -Question 'Which assessment?' -Options $labels
+        if ($c -eq $reports.Count) { return }
+        $report = $reports[$c]
+    }
+
+    $path = $report.File.FullName
+    $dir  = Split-Path -Parent $path
+    Write-Good ($path.Substring($script:Root.Length + 1) + '   ' + $report.File.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))
+
+    while ($true) {
+        $tabs = Get-AfsReportTabs -Path $path
+        $labels = @('Open the whole report')
+        foreach ($t in $tabs) { $labels += ('Open at: ' + $t.Label) }
+        $labels += 'Show the headline numbers here'
+        $labels += 'Open the folder it is in'
+        $labels += 'Back'
+
+        $c = Read-Choice -Question 'What would you like to see?' -Options $labels
+        $iCounts = 1 + $tabs.Count
+        $iFolder = $iCounts + 1
+        $iBack   = $iFolder + 1
+
+        if ($c -eq $iBack) { return }
+
+        if ($c -eq $iCounts) {
+            # The terminal answer, for when opening a browser is not what you want.
+            $fj = Join-Path $dir 'findings.json'
+            if (-not (Test-Path $fj)) { Write-Note ('findings.json is not beside the report: ' + $dir); continue }
+            try {
+                $doc = Get-Content $fj -Raw | ConvertFrom-Json
+                Write-Host ''
+                foreach ($sev in @('High', 'Medium', 'Low', 'Info')) {
+                    $n = 0
+                    if ($doc.counts -and ($doc.counts.PSObject.Properties.Name -contains $sev)) { $n = [int]$doc.counts.$sev }
+                    $colour = switch ($sev) { 'High' { 'Red' } 'Medium' { 'Yellow' } default { 'DarkGray' } }
+                    Write-Host ('    ' + $sev.PadRight(8) + ([string]$n).PadLeft(4)) -ForegroundColor $colour
+                }
+                $top = @($doc.findings | Where-Object { $_.severity -eq 'High' } | Select-Object -First 5)
+                if ($top.Count) {
+                    Write-Host ''
+                    Write-Host '    highest first:' -ForegroundColor DarkGray
+                    foreach ($f in $top) { Write-Host ('      ' + $f.id + '  ' + $f.title) -ForegroundColor DarkGray }
+                }
+            } catch { Write-Bad ('could not read findings.json: ' + $_.Exception.Message) }
+            continue
+        }
+
+        if ($c -eq $iFolder) {
+            try { Start-Process $dir; Write-Good $dir } catch { Write-Bad $_.Exception.Message }
+            continue
+        }
+
+        # A fragment only means something on a URI - see the how-to guide for the same trap.
+        $target = $path
+        if ($c -gt 0) { $target = ([uri]$path).AbsoluteUri + '#' + $tabs[$c - 1].Id }
+        try { Start-Process $target; Write-Good $target }
+        catch {
+            try { Start-Process $path; Write-Good $path; if ($c -gt 0) { Write-Note ('opened at the top - the tab you wanted is ' + $tabs[$c - 1].Label + '.') } }
+            catch { Write-Bad ('could not open a browser: ' + $_.Exception.Message); Write-Explain ('Open this file by hand: ' + $path) }
+        }
+    }
+}
+
 function Invoke-ReportsFlow {
     <# Menu entry: open the findings and as-built reports that have been produced. #>
     while ($true) {
@@ -1336,6 +1463,7 @@ while ($true) {
             'Deployment settings - names, region, network, backup, directory',
             'Build a new Azure File Sync environment',
             'Assess an existing environment',
+            'See the assessment results - every tab, with the detail behind them',
             'Assess policy and governance across the tenant',
             'Remove an environment I built',
             'Just check my prerequisites',
@@ -1357,15 +1485,16 @@ while ($true) {
             1 { Invoke-SettingsFlow }
             2 { Invoke-BuildFlow }
             3 { Invoke-AssessFlow }
-            4 { Invoke-GovernanceFlow }
-            5 { Invoke-RemoveFlow }
-            6 { [void](Test-Prerequisites -ForDeploy) }
-            7 { Invoke-DocsFlow }
-            8 { Invoke-CodexFlow }
-            9 { Invoke-OnPremisesFlow }
-            10 { Invoke-ResumeFlow }
-            11 { Invoke-ReportsFlow }
-            12 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
+            4 { Invoke-AssessmentResultsFlow }
+            5 { Invoke-GovernanceFlow }
+            6 { Invoke-RemoveFlow }
+            7 { [void](Test-Prerequisites -ForDeploy) }
+            8 { Invoke-DocsFlow }
+            9 { Invoke-CodexFlow }
+            10 { Invoke-OnPremisesFlow }
+            11 { Invoke-ResumeFlow }
+            12 { Invoke-ReportsFlow }
+            13 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
         }
     } catch {
         Write-AfsLogException -ErrorRecord $_ -Context 'flow failed'
