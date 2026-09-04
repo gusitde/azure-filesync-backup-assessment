@@ -219,6 +219,19 @@ Check (@($rtabs | Where-Object { $_.Id -eq 'findings' }).Count -eq 1) 'the findi
 Check (@($rtabs | Where-Object { -not $_.Id -or -not $_.Label }).Count -eq 0) 'every tab has both an id and a label'
 Check (@($rtabs | Where-Object { $_.Id -match '\s' }).Count -eq 0) 'no id is a flattened concatenation of several ids'
 Check ($wizSrc2 -like '*function Invoke-AssessmentResultsFlow*') 'the assessment-results flow exists'
+# The wizard keeps its own list of subject tab ids, to notice a report written before they
+# existed. Add a tab to the renderer and forget this list, and that detection silently rots.
+$wizSubjects = @()
+$m = [regex]::Match($wizSrc2, '\$SUBJECT_TABS = @\(([^)]*)\)')
+if ($m.Success) { $wizSubjects = @([regex]::Matches($m.Groups[1].Value, "'([a-z0-9-]+)'") | ForEach-Object { $_.Groups[1].Value }) }
+$renderSrc = Get-Content (Join-Path $repo 'Render-AfsAssessmentHtml.ps1') -Raw
+$rm = [regex]::Match($renderSrc, '\$script:AfsDataTabs = @\((.*?)
+\)', 'Singleline')
+$renderSubjects = @()
+if ($rm.Success) { $renderSubjects = @([regex]::Matches($rm.Groups[1].Value, "id = '([a-z0-9-]+)'") | ForEach-Object { $_.Groups[1].Value }) }
+Check ($wizSubjects.Count -gt 0 -and $renderSubjects.Count -gt 0) "both subject lists were found (wizard $($wizSubjects.Count), renderer $($renderSubjects.Count))"
+Check (@(Compare-Object $wizSubjects $renderSubjects).Count -eq 0) 'the wizard knows exactly the subject tabs the renderer produces'
+Check ($wizSrc2 -like '*Re-generate this report from its export*') 'an out-of-date report can be rebuilt from the export it records'
 Check ($wizSrc2 -like '*See the assessment results*') 'the menu offers it'
 
 # -- 5d. the menu and its dispatch agree -------------------------------------------------------

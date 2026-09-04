@@ -983,20 +983,75 @@ read-only, assesses it, and writes assessment.html beside the export."
     $dir  = Split-Path -Parent $path
     Write-Good ($path.Substring($script:Root.Length + 1) + '   ' + $report.File.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))
 
+    # A report written before the subject tabs existed carries only the six original ones. It
+    # opens perfectly well - it just cannot show the estate, and nothing on screen would say why.
+    $SUBJECT_TABS = @('storage', 'filesync', 'backup', 'network', 'servers', 'adjacent', 'provenance')
+
     while ($true) {
         $tabs = Get-AfsReportTabs -Path $path
+        $ids = @($tabs | ForEach-Object { $_.Id })
+        $hasSubjects = @($SUBJECT_TABS | Where-Object { $ids -contains $_ }).Count -gt 0
+
+        # The report records the export it was made from, so it can be rebuilt without asking.
+        $srcExport = ''
+        $srcCustomer = ''
+        $fjson = Join-Path $dir 'findings.json'
+        if (Test-Path $fjson) {
+            try {
+                $fd = Get-Content $fjson -Raw | ConvertFrom-Json
+                $srcExport = [string](Get-AfsProp $fd 'export' '')
+                $srcCustomer = [string](Get-AfsProp $fd 'customer' '')
+            } catch { }
+        }
+        $canRegen = $srcExport -and (Test-Path $srcExport)
+
+        if (-not $hasSubjects) {
+            Write-Host ''
+            Write-Note ('this report has ' + $tabs.Count + ' tabs - it was written before the per-subject tabs existed.')
+            Write-Explain "Findings, roadmap, scope and rules are all there. What is missing is the
+estate itself: Storage, File Sync, Backup, Network, Servers, Guardrails
+and Export - the evidence a finding is checked against."
+            if ($canRegen) { Write-Explain ('It can be rebuilt from the export it was made from: ' + $srcExport) }
+            elseif ($srcExport) { Write-Explain ('Its export is no longer at ' + $srcExport + ', so it cannot be rebuilt from here.') }
+        }
+
         $labels = @('Open the whole report')
         foreach ($t in $tabs) { $labels += ('Open at: ' + $t.Label) }
         $labels += 'Show the headline numbers here'
         $labels += 'Open the folder it is in'
+        if ($canRegen) {
+            $regenLabel = 'Re-generate this report from its export'
+            if (-not $hasSubjects) { $regenLabel += ' (adds the subject tabs)' }
+            $labels += $regenLabel
+        }
         $labels += 'Back'
 
         $c = Read-Choice -Question 'What would you like to see?' -Options $labels
         $iCounts = 1 + $tabs.Count
         $iFolder = $iCounts + 1
-        $iBack   = $iFolder + 1
+        $iRegen  = if ($canRegen) { $iFolder + 1 } else { -1 }
+        $iBack   = $labels.Count - 1
 
         if ($c -eq $iBack) { return }
+
+        if ($canRegen -and $c -eq $iRegen) {
+            # Same export, same output folder, same name unless it is worth correcting.
+            $name = $srcCustomer
+            if (-not $name) { $name = 'Customer' }
+            $name = Read-Answer -Question 'Name to put on the report?' -Why 'This is only a label - it does not change what is assessed.' -Default $name
+            Write-Explain ('Re-assessing ' + $srcExport)
+            try {
+                & (Join-Path $script:Root 'Assess-AzFileSyncExport.ps1') -ExportPath $srcExport -OutputPath $dir -CustomerName $name | Out-Null
+                Write-Good ('rebuilt ' + $path)
+                $after = Get-AfsReportTabs -Path $path
+                # int + string throws in PowerShell - the int wins the type coercion.
+                Write-Good ([string]$after.Count + ' tabs now')
+            } catch {
+                Write-AfsLogException -ErrorRecord $_ -Context 'report rebuild failed'
+                Write-Bad ('the report was not rebuilt: ' + $_.Exception.Message)
+            }
+            continue
+        }
 
         if ($c -eq $iCounts) {
             # The terminal answer, for when opening a browser is not what you want.
