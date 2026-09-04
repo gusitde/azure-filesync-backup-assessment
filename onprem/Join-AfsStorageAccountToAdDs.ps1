@@ -123,7 +123,7 @@ if (-not $SamAccountName) {
     }
 }
 
-Set-AfsStepTotal -Total $(if ($Remove) { 3 } else { 6 }) -Activity 'Azure Files - AD DS join'
+Set-AfsStepTotal -Total $(if ($Remove) { 4 } else { 6 }) -Activity 'Azure Files - AD DS join'
 
 Write-Host ''
 Write-Host ("  storage account : " + $sa + " (" + $rg + ")") -ForegroundColor White

@@ -114,10 +114,13 @@ $res = ConvertTo-Array (Invoke-Az @('resource', 'list', '-g', $ResourceGroup, '-
 Write-Host ("   " + $res.Count + " resource(s) in the group")
 foreach ($r in $res) { Write-Host ("     - " + $r.name + "  (" + $r.type + ")") }
 
-# names the parameter file accounts for
+# Names this deployment accounts for. The private DNS zones belong here as much as the
+# storage account does - the build creates them - and leaving them out made the safety check
+# refuse a teardown of an estate it had just built, which teaches people to reach for -Force
+# and defeats the point of the check.
 $known = New-Object System.Collections.ArrayList
 foreach ($n in @($cfg.storageAccountName, $cfg.storageSyncServiceName, $cfg.vaultName,
-                 $cfg.vnetName, $cfg.dnsResolverName)) {
+                 $cfg.vnetName, $cfg.dnsResolverName, $cfg.zoneFile, $cfg.zoneAfs)) {
     if ($n) { [void]$known.Add($n) }
 }
 
