@@ -88,7 +88,8 @@ function Start-AfsLog {
     $who = $null
     try { $who = (& az account show --query user.name -o tsv 2>$null) } catch { }
 
-    Write-AfsLog -Level INFO -Message ("log started: run={0} level={1}" -f $env:AFS_LOG_RUN, $Level) -Data @{
+    Write-AfsLog -Level INFO -Message ("log started: run={0} level={1} version={2}" -f $env:AFS_LOG_RUN, $Level, $script:AfsProductVersion) -Data @{
+        version    = $script:AfsProductVersion
         powershell = $PSVersionTable.PSVersion.ToString()
         azureCli   = $azv
         account    = $who
@@ -329,6 +330,19 @@ $script:AfsStepClock = $null
 $script:AfsStepLabel = $null
 $script:AfsRunClock  = $null
 $script:AfsStepTimes = New-Object System.Collections.ArrayList
+
+# ============================================================ product stamp ==
+#  V YYYY.MM.DD.NNN - the date of the change, then its ordinal on that day.
+#  THIS IS THE ONE PLACE THE VERSION LIVES. The banner, the run logs, the as-built and any
+#  shipped zip read it from here. Bump it with every change and record the change in
+#  docs/VERSION-CONTROL.md - same scheme as the sibling Server-Ops product, deliberately.
+$script:AfsProductName    = 'Luca Az-Deploy plus'
+$script:AfsProductVersion = 'V 2026.09.04.001'
+$script:AfsProductAuthor  = 'Gustavo Assuncao'
+
+function Get-AfsProductInfo {
+    return [pscustomobject]@{ Name = $script:AfsProductName; Version = $script:AfsProductVersion; Author = $script:AfsProductAuthor }
+}
 
 function Format-AfsDuration {
     param([TimeSpan]$Span)

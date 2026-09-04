@@ -278,6 +278,30 @@ if ($state.AgentVersion) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
         $msi = Join-Path $dir 'StorageSyncAgent.msi'
         $log = Join-Path $dir 'AFSInstaller.log'
+
+        # An uninstall of this agent returns 3010 - done, but Windows needs a restart to
+        # unload the file system filter. Install again before that restart and the MSI dies
+        # with 1603 in about seven seconds. Catching it here costs two seconds; not catching
+        # it costs the full install timeout and produces a log that names no cause.
+        $pendingRename = @()
+        try {
+            $pfro = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations
+            if ($pfro) { $pendingRename = @($pfro | Where-Object { $_ -match 'StorageSync|FileSync' }) }
+        } catch { }
+        $filterLoaded = $false
+        try { $filterLoaded = [bool](@(& fltmc.exe filters 2>$null) -match 'StorageSync') } catch { }
+        $alreadyThere = [bool](Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Azure\StorageSync\Agent' -ErrorAction SilentlyContinue)
+        if (-not $alreadyThere -and ($pendingRename.Count -gt 0 -or $filterLoaded)) {
+            throw ("This server still has the previous Azure File Sync agent's file system filter " +
+                   "loaded, waiting for a restart. Installing now fails with MSI error 1603. " +
+                   "Restart $env:COMPUTERNAME and run this step again.")
+        }
+        # A restart pending for some other reason does not stop the agent installing, so it is
+        # worth saying and not worth blocking on.
+        $genericPending = (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
+                          (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
+        if ($genericPending) { Write-Warning "$env:COMPUTERNAME has a restart pending for another reason - continuing, but restart it soon." }
+
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing -TimeoutSec 600
         $sig = Get-AuthenticodeSignature $msi
@@ -294,15 +318,42 @@ if ($state.AgentVersion) {
         Start-ScheduledTask -TaskName $task
         $deadline = (Get-Date).AddMinutes(20)
         $agent = $null
+        $msiExit = $null
         while ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 10
             $agent = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Azure\StorageSync\Agent' -ErrorAction SilentlyContinue
             if ($agent -and $agent.Version) { break }
+            # Watching only for the success key means a failed MSI is indistinguishable from a
+            # slow one, and the wait runs to the deadline for an install that died in seconds.
+            # The task knows: ask it. 267011 is SCHED_S_TASK_HAS_NOT_RUN.
+            $st   = (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue).State
+            $info = Get-ScheduledTaskInfo -TaskName $task -ErrorAction SilentlyContinue
+            if ($st -and $st -ne 'Running' -and $info -and $info.LastTaskResult -ne 267011) {
+                if ($info.LastTaskResult -ne 0 -and $info.LastTaskResult -ne 3010) { $msiExit = $info.LastTaskResult; break }
+            }
         }
         Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
         if (-not ($agent -and $agent.Version)) {
-            $tail = if (Test-Path $log) { (Get-Content $log -Tail 25) -join "`n" } else { '(no installer log)' }
-            throw ("The agent did not install within 20 minutes. Last lines of $log :`n" + $tail)
+            # The last 25 lines of an MSI log are the teardown, which names no cause. These
+            # patterns are the lines that do.
+            $why = @()
+            if (Test-Path $log) {
+                $why = @(Get-Content $log -ErrorAction SilentlyContinue |
+                         Where-Object { $_ -match 'Installation failed|error status: \d+|Error \d{4}|return value 3|Note: 1: 2262|MainEngineThread is returning' } |
+                         Select-Object -Last 8)
+            }
+            $meaning = switch ($msiExit) {
+                1603 { 'MSI 1603 - fatal error during installation. The usual cause is a previous agent whose file system filter is still loaded, waiting for a restart.' }
+                1618 { 'MSI 1618 - another installation is already in progress. Wait for it to finish.' }
+                1638 { 'MSI 1638 - another version of this product is already installed. Remove it first.' }
+                1601 { 'MSI 1601 - the Windows Installer service could not be accessed.' }
+                $null { $null }
+                default { ('msiexec exited ' + $msiExit) }
+            }
+            $head = if ($msiExit -ne $null) { 'The agent installer failed. ' + $meaning }
+                    else { 'The agent did not install within 20 minutes, and the installer task never reported a result.' }
+            $detail = if ($why.Count) { "`n`nFrom $log :`n" + ($why -join "`n") } else { "`n`n(no usable detail in $log)" }
+            throw ($head + $detail)
         }
         return [pscustomobject]@{ Version = $agent.Version; InstallDir = $agent.InstallDir; Service = (Get-Service FileSyncSvc -ErrorAction SilentlyContinue).Status }
     }

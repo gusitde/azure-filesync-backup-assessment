@@ -146,14 +146,63 @@ function Invoke-Dns {
        when it is installed (better errors), and falls back to running it inside a remoting
        session on the DNS server itself, where the module always exists. #>
     param([Parameter(Mandatory)][string]$Server, [Parameter(Mandatory)][scriptblock]$Body, [object[]]$ArgumentList, [string]$What = 'dns command', [switch]$AllowFailure)
-    if (Get-Module -ListAvailable -Name DnsServer) {
+    # Both routes can fail for quite different reasons, and "it did not work" was collapsing
+    # all of them into one message that named three causes and hit none. Keep the reasons.
+    $script:LastDnsLocalError  = $null
+    $script:LastDnsRemoteError = $null
+    $script:LastDnsModuleFound = [bool](Get-Module -ListAvailable -Name DnsServer)
+    if ($script:LastDnsModuleFound) {
         try { return (& $Body $Server @ArgumentList) }
-        catch { if (-not $AllowFailure) { Write-AfsLog -Level DEBUG -Message ('local DnsServer module failed for ' + $What + ': ' + $_.Exception.Message) } }
+        catch {
+            $script:LastDnsLocalError = $_.Exception.Message
+            Write-AfsLog -Level DEBUG -Message ('local DnsServer module failed for ' + $What + ': ' + $_.Exception.Message)
+        }
     }
     $p = @{ ComputerName = $Server; ScriptBlock = $Body; ArgumentList = (@($null) + $ArgumentList); ErrorAction = 'Stop' }
     if ($Credential) { $p.Credential = $Credential }
     try { return (Invoke-Command @p) }
-    catch { if ($AllowFailure) { return $null }; throw }
+    catch {
+        $script:LastDnsRemoteError = $_.Exception.Message
+        Write-AfsLog -Level DEBUG -Message ('remoting failed for ' + $What + ' on ' + $Server + ': ' + $_.Exception.Message)
+        if ($AllowFailure) { return $null }
+        throw
+    }
+}
+
+function Get-AfsDnsFailureAdvice {
+    <#  Turn the two captured errors into the one sentence that names the real cause. The old
+        message listed three possibilities and, on the run that prompted this, was wrong about
+        all three: the DNS role was fine, the server was reachable, and the account had rights -
+        the RSAT DnsServer module simply was not installed, so the cmdlet did not exist. #>
+    param([string]$Server)
+    $lines = @()
+    if (-not $script:LastDnsModuleFound) {
+        $lines += "The RSAT DnsServer PowerShell module is not installed on this machine, so Get-DnsServerZone does not exist here."
+        $lines += "  Install it (elevated, once):  Install-WindowsFeature RSAT-DNS-Server   # Windows Server"
+        $lines += "                                Add-WindowsCapability -Online -Name Rsat.Dns.Tools~~~~0.0.1.0   # Windows 10/11"
+        $lines += "  Without it this falls back to running the command on $Server over PowerShell remoting, which needs WinRM there."
+    } elseif ($script:LastDnsLocalError) {
+        $lines += ("The DnsServer module is installed, but reading zones on $Server failed: " + $script:LastDnsLocalError)
+    }
+    $r = $script:LastDnsRemoteError
+    if ($r) {
+        if ($r -match 'Access is denied') {
+            $lines += "Remoting to $Server was refused: access denied."
+            $lines += "  You are signed in as $env:USERDOMAIN\$env:USERNAME. Domain controllers usually refuse a local account."
+            $lines += "  Re-run with -Credential (the wizard offers this), using an account in DnsAdmins or Domain Admins."
+        } elseif ($r -match 'cannot be resolved|not be resolved|No such host') {
+            $lines += "The name $Server did not resolve. Check the spelling, or use its fully qualified name."
+        } elseif ($r -match 'WinRM|cannot connect|Connecting to remote server') {
+            $lines += ("WinRM could not reach $Server : " + $r)
+            $lines += "  Test it with:  Test-WSMan -ComputerName $Server -Credential (Get-Credential)"
+        } elseif ($r -match 'not recognized as the name of a cmdlet') {
+            $lines += "$Server answered, but does not have the DNS Server role installed - Get-DnsServerZone is missing there too."
+        } else {
+            $lines += ("Remoting to $Server failed: " + $r)
+        }
+    }
+    if (-not $lines.Count) { $lines += "No zones came back from $Server, and neither route reported an error." }
+    return ($lines -join "`n  ")
 }
 
 try {
@@ -176,7 +225,7 @@ foreach ($s in $DnsServer) {
         if ($srv) { Get-DnsServerZone -ComputerName $srv -ErrorAction Stop | Select-Object ZoneName, ZoneType }
         else { Get-DnsServerZone -ErrorAction Stop | Select-Object ZoneName, ZoneType }
     }
-    if (-not $zoneRead) { throw ("Cannot read DNS zones on $s. Check that it runs the DNS Server role, that WinRM or RPC reaches it, and that you are in DnsAdmins or Domain Admins.") }
+    if (-not $zoneRead) { throw ("Cannot read DNS zones on $s.`n  " + (Get-AfsDnsFailureAdvice -Server $s)) }
     Write-AfsOk ($s + ' answers - ' + (ConvertTo-AfsArray $zoneRead).Count + ' zones')
 }
 

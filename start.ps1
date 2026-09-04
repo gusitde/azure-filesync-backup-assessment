@@ -41,13 +41,56 @@ $script:LogFile = Start-AfsLog -Level $LogLevel -Name 'wizard'
 
 function Write-Rule { Write-Host ('-' * 74) -ForegroundColor DarkGray }
 
+function Get-AfsInk {
+    <#  The brand is indigo (#6366f1), which the 16-colour console cannot express. Where the
+        console does truecolour, use the real thing; everywhere else fall back to the Cyan the
+        sibling Server-Ops wizard already ships, so the family still looks like one company
+        built it. Never emit escapes into a redirected stream - that is what ends up in a log. #>
+    param([int]$R, [int]$G, [int]$B)
+    if ([Console]::IsOutputRedirected -or -not $Host.UI.SupportsVirtualTerminal) { return '' }
+    return ([string][char]27 + '[38;2;' + $R + ';' + $G + ';' + $B + 'm')
+}
+function Get-AfsInkOff { if ([Console]::IsOutputRedirected -or -not $Host.UI.SupportsVirtualTerminal) { return '' } return ([string][char]27 + '[0m') }
+
 function Write-Banner {
     if ($Host.UI.RawUI -and -not [Console]::IsOutputRedirected) { Clear-Host }
+    # Block glyphs by [char] code so this file stays strictly ASCII on disk.
+    $b1 = [string][char]0x2591; $b2 = [string][char]0x2592; $b3 = [string][char]0x2593; $b4 = [string][char]0x2588
+    $dash = [string][char]0x2500
+    $off  = Get-AfsInkOff
+    # lucaexpress.com indigo, deep to light and back - #4338ca #4f46e5 #6366f1 #818cf8
+    $ramp  = @((Get-AfsInk 67 56 202), (Get-AfsInk 79 70 229), (Get-AfsInk 99 102 241), (Get-AfsInk 129 140 248))
+    $glyph = @($b1, $b2, $b3, $b4)
+    $p = Get-AfsProductInfo
+
     Write-Host ''
-    Write-Host '  Luca Az-Deploy plus' -ForegroundColor White
-    Write-Host '  Azure File Sync and Azure Backup - assess, build, connect' -ForegroundColor DarkGray
+    if ($ramp[0]) {
+        # truecolour: a real gradient either side of the wordmark
+        $left = ''; $right = ''
+        for ($i = 0; $i -lt 4; $i++) {
+            $left  += $ramp[$i] + ($glyph[$i] * 3)
+            $right += $ramp[3 - $i] + ($glyph[3 - $i] * 3)
+        }
+        Write-Host ('  ' + $left + $off) -NoNewline
+        Write-Host ('  ' + $p.Name + '  ') -NoNewline -ForegroundColor White
+        Write-Host ($right + $off)
+        Write-Host ('  ' + (Get-AfsInk 129 140 248) + 'Azure File Sync and Azure Backup' + $off) -NoNewline
+        Write-Host ('   ' + $p.Version + '  -  ' + $p.Author) -ForegroundColor DarkGray
+        Write-Host ('  ' + (Get-AfsInk 110 118 129) + 'assess ' + $dash + ' build ' + $dash + ' connect ' + $dash + ' protect ' + $dash + ' govern ' + $dash + ' remove' + $off)
+        Write-Host ('  ' + (Get-AfsInk 79 70 229) + ($dash * 70) + $off)
+    } else {
+        # 16-colour fallback - the same shape the Server-Ops wizard uses
+        $grad  = ($b1 * 3) + ($b2 * 3) + ($b3 * 3) + ($b4 * 3)
+        $gradR = ($b4 * 3) + ($b3 * 3) + ($b2 * 3) + ($b1 * 3)
+        Write-Host ('  ' + $grad) -NoNewline -ForegroundColor Cyan
+        Write-Host ('  ' + $p.Name + '  ') -NoNewline -ForegroundColor White
+        Write-Host $gradR -ForegroundColor Cyan
+        Write-Host '  Azure File Sync and Azure Backup' -NoNewline -ForegroundColor Cyan
+        Write-Host ('   ' + $p.Version + '  -  ' + $p.Author) -ForegroundColor DarkGray
+        Write-Host '  assess - build - connect - protect - govern - remove' -ForegroundColor DarkGray
+        Write-Host ('  ' + ($dash * 70)) -ForegroundColor DarkCyan
+    }
     Write-Host ''
-    Write-Rule
 }
 
 function Write-Title {
@@ -72,6 +115,7 @@ function Read-Answer {
         [Parameter(Mandatory)][string]$Question,
         [string]$Why,
         [string]$Default,
+        [string]$Example,
         [string]$Pattern,
         [string]$PatternHelp,
         [switch]$AllowEmpty
@@ -82,6 +126,10 @@ function Read-Answer {
         Write-Host ''
         Write-Host ("  " + $Question) -ForegroundColor White
         if ($Why) { Write-Explain $Why }
+        # A remembered answer is offered and Enter takes it. An example is only ever shown -
+        # pressing Enter must never commit to a server or a folder that was invented here to
+        # illustrate a format.
+        if ($Example -and -not $Default) { Write-Host ("         e.g. " + $Example) -ForegroundColor DarkGray }
         $prompt = if ($Default) { "  > [$Default] " } else { '  > ' }
         Write-Host $prompt -NoNewline -ForegroundColor White
         $answer = Read-Host
@@ -100,8 +148,17 @@ function Read-Answer {
     }
 }
 
+function Clear-AfsPendingInput {
+    <#  A step can run for twenty minutes. Anything typed while it ran is sitting in the console
+        buffer and would be swallowed instantly by the next prompt - answering a question that
+        had not been asked yet. On a menu whose entries include "Remove an environment" that is
+        not a cosmetic problem. Only meaningful on a real console, so failure here is fine. #>
+    try { if (-not [Console]::IsInputRedirected) { $Host.UI.RawUI.FlushInputBuffer() } } catch { }
+}
+
 function Read-YesNo {
     param([Parameter(Mandatory)][string]$Question, [string]$Why, [bool]$DefaultYes = $true)
+    Clear-AfsPendingInput
     $d = if ($DefaultYes) { 'Y/n' } else { 'y/N' }
     $tries = 0
     while ($true) {
@@ -126,6 +183,7 @@ function Read-YesNo {
 
 function Read-Choice {
     param([Parameter(Mandatory)][string]$Question, [Parameter(Mandatory)][string[]]$Options)
+    Clear-AfsPendingInput
     $tries = 0
     while ($true) {
         if (++$tries -gt 5) { throw 'No usable choice after several attempts. Stopping rather than looping.' }
@@ -645,7 +703,11 @@ Directory - so each asks before it does anything."
                     $ctx = Read-AfsJsonc -Path $script:ContextFile
                     $onprem = Get-AfsProp $ctx.config 'onPremises'
                     $defServer = [string](Get-AfsProp $onprem 'fileServer' '')
-                    $server = Read-Answer -Question 'Which file server?' -Why 'A name this machine can reach over PowerShell remoting.' -Default $defServer -Pattern '^[A-Za-z0-9._-]+$' -PatternHelp 'a computer name, for example fs01 or fs01.corp.example.com'
+                    # No saved answer? Show the shape of one, built from the AD domain so the
+                    # example fits this environment - but as an example, never as a default.
+                    $dom = [string](Get-AfsProp $ctx.config 'adDomainFqdn' '')
+                    $exServer = if ($dom) { 'fs01.' + $dom } else { 'fs01.corp.example.com' }
+                    $server = Read-Answer -Question 'Which file server?' -Why 'A name this machine can reach over PowerShell remoting.' -Default $defServer -Example $exServer -Pattern '^[A-Za-z0-9._-]+$' -PatternHelp 'a computer name, for example fs01 or fs01.corp.example.com'
                     $shares = @(ConvertTo-Array $ctx.config.shares | ForEach-Object { $_.name })
                     $paths = Get-AfsProp $onprem 'serverPaths'
                     $maps = @()
@@ -673,11 +735,22 @@ resolver answers with a private address before it writes anything, and
 refuses if it does not."
                     $ctxD = Read-AfsJsonc -Path $script:ContextFile
                     $defDns = [string](Get-AfsProp (Get-AfsProp $ctxD.config 'onPremises') 'dnsServers' '')
-                    $servers = Read-Answer -Question 'Which DNS servers?' -Why 'Comma-separated. Name every resolver your clients use, not only the domain controllers - Active Directory replicates a forwarder to domain controllers running DNS and nowhere else.' -Default $defDns -Pattern '^[A-Za-z0-9._,\s-]+$' -PatternHelp 'one or more computer names separated by commas'
+                    $domD = [string](Get-AfsProp $ctxD.config 'adDomainFqdn' '')
+                    $exDns = if ($domD) { 'dc01.' + $domD + ', dc02.' + $domD } else { 'dc01.corp.example.com, dc02.corp.example.com' }
+                    $servers = Read-Answer -Question 'Which DNS servers?' -Example $exDns -Why 'Comma-separated. Name every resolver your clients use, not only the domain controllers - Active Directory replicates a forwarder to domain controllers running DNS and nowhere else.' -Default $defDns -Pattern '^[A-Za-z0-9._,\s-]+$' -PatternHelp 'one or more computer names separated by commas'
                     Save-AfsOnPremisesAnswers -DnsServers $servers
-                    & (Join-Path $script:OnPremDir 'Set-AfsDnsForwarders.ps1') -Context $script:ContextFile -DnsServer $servers -WhatIf
+                    # Reading zones on a domain controller usually needs an account in DnsAdmins
+                    # or Domain Admins, and the signed-in one often is not. Offering it here beats
+                    # failing on the read and making someone work out which switch to pass.
+                    $dnsCred = $null
+                    if (Read-YesNo -Question 'Use a different account to reach the DNS servers?' -Why 'Reading and writing zones needs DnsAdmins or Domain Admins. Answer no to use the account you are signed in with.' -DefaultYes $false) {
+                        $dnsCred = Get-Credential -Message 'Account with DnsAdmins or Domain Admins rights'
+                    }
+                    $dnsArgs = @{ Context = $script:ContextFile; DnsServer = $servers }
+                    if ($dnsCred) { $dnsArgs.Credential = $dnsCred }
+                    & (Join-Path $script:OnPremDir 'Set-AfsDnsForwarders.ps1') @dnsArgs -WhatIf
                     if (Read-YesNo -Question 'Do it for real?' -DefaultYes $false) {
-                        & (Join-Path $script:OnPremDir 'Set-AfsDnsForwarders.ps1') -Context $script:ContextFile -DnsServer $servers -Confirm:$false
+                        & (Join-Path $script:OnPremDir 'Set-AfsDnsForwarders.ps1') @dnsArgs -Confirm:$false
                     }
                 }
                 2 {
@@ -1142,6 +1215,7 @@ function Invoke-DocsFlow {
         @{ f = 'docs/RULES.md';                   n = 'Assessor rules';          d = 'Every rule the assessment applies, with its recommendation and source.' },
         @{ f = 'docs/ARCHITECTURE-REFERENCES.md'; n = 'Architecture references'; d = '73 verified Microsoft sources, each with a specific take-away.' },
         @{ f = 'docs/VALIDATION.md';              n = 'Validation record';       d = 'What has been executed, what has not, and what execution found.' },
+        @{ f = 'docs/VERSION-CONTROL.md';        n = 'Version control';         d = 'The version scheme, the change ledger, and how to cut a release.' },
         @{ f = 'docs/PROOF-OF-WORK.md';           n = 'Proof of work';           d = 'What was built and what verification caught. For sharing.' },
         @{ f = 'docs/AS-BUILT-TEMPLATE.md';       n = 'As-built template';       d = 'Fill in after a deployment. Names the evidence and screenshots to capture.' },
         @{ f = 'docs/PLAYBOOK-azure-file-sync-assessment.md';   n = 'Playbook: assessment'; d = 'Scope, export, assess and recommend on an existing estate.' },
