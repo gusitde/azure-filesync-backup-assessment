@@ -104,7 +104,7 @@ V 'resource group' "az group show -n $rg --query name -o tsv"
 # -------------------------------------------------------------- resources ---
 L '## Resources'
 L ''
-$res = ConvertTo-Array (Q @('resource', 'list', '-g', $rg, '--query', '[].{name:name,type:type,location:location}', '-o', 'json'))
+$res = ConvertTo-Array (Q @('resource', 'list', '-g', $rg, '--query', '[].{name:name,type:type,location:location,id:id}', '-o', 'json'))
 L "| Name | Type | Region |"
 L '|---|---|---|'
 foreach ($r in ($res | Sort-Object type, name)) { L ("| ``{0}`` | {1} | {2} |" -f $r.name, $r.type, $r.location) }
@@ -238,6 +238,65 @@ if ($sss) {
     V 'storage sync service' "az resource show -g $rg -n $($cfg.storageSyncServiceName) --resource-type Microsoft.StorageSync/storageSyncServices --query properties.incomingTrafficPolicy -o tsv"
 } else { L "_Storage Sync Service $($cfg.storageSyncServiceName) not found._"; L '' }
 
+# The sync topology is nested under the service and does not appear in a resource list, but
+# it is the part that MUST come off first in a teardown - a cloud endpoint cannot be removed
+# while a server endpoint uses it, and the sync group cannot go while either exists. Read it
+# through the ARM API so no CLI extension is needed.
+$armBase = "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.StorageSync/storageSyncServices/$($cfg.storageSyncServiceName)"
+$apiVer = '2022-09-01'
+function ArmList { param([string]$Url) $r = Q @('rest', '--method', 'get', '--url', $Url, '-o', 'json'); if ($r -and $r.PSObject.Properties['value']) { return ConvertTo-Array $r.value }; return ,@() }
+
+$registered = @()
+$syncTopology = @()
+if ($sss) {
+    foreach ($srv in (ArmList "$armBase/registeredServers?api-version=$apiVer")) {
+        $registered += [pscustomobject]@{
+            name         = $srv.properties.friendlyName
+            serverId     = $srv.name
+            agentVersion = $srv.properties.agentVersion
+            lastHeartBeat= $srv.properties.lastHeartBeat
+            id           = $srv.id
+        }
+    }
+    foreach ($sg in (ArmList "$armBase/syncGroups?api-version=$apiVer")) {
+        $ce = @(); $se = @()
+        foreach ($c in (ArmList "$armBase/syncGroups/$($sg.name)/cloudEndpoints?api-version=$apiVer")) {
+            $ce += [pscustomobject]@{ name = $c.name; share = $c.properties.azureFileShareName; id = $c.id }
+        }
+        foreach ($e in (ArmList "$armBase/syncGroups/$($sg.name)/serverEndpoints?api-version=$apiVer")) {
+            $se += [pscustomobject]@{ name = $e.name; path = $e.properties.serverLocalPath; tiering = $e.properties.cloudTiering; health = $e.properties.syncStatus.combinedHealth; id = $e.id }
+        }
+        $syncTopology += [pscustomobject]@{ name = $sg.name; id = $sg.id; cloudEndpoints = $ce; serverEndpoints = $se }
+    }
+}
+
+L '### Sync topology'
+L ''
+if ($registered.Count -eq 0 -and $syncTopology.Count -eq 0) {
+    L '_No server is registered and no sync group exists - nothing is syncing yet._'
+    L ''
+} else {
+    L '| Registered server | Agent | Last heartbeat |'
+    L '|---|---|---|'
+    foreach ($r in $registered) { L ("| ``{0}`` | {1} | {2} |" -f $r.name, (T $r.agentVersion), (T $r.lastHeartBeat)) }
+    L ''
+    L '| Sync group | Cloud endpoint (share) | Server endpoint (path) | Tiering | Health |'
+    L '|---|---|---|---|---|'
+    foreach ($g in $syncTopology) {
+        $cn = (($g.cloudEndpoints | ForEach-Object { $_.name + ' (' + $_.share + ')' }) -join ', ')
+        if (-not $cn) { $cn = '-' }
+        if ($g.serverEndpoints.Count -eq 0) {
+            L ("| ``{0}`` | {1} | - | - | - |" -f $g.name, $cn)
+        } else {
+            foreach ($e in $g.serverEndpoints) {
+                L ("| ``{0}`` | {1} | ``{2}`` on {3} | {4} | {5} |" -f $g.name, $cn, (T $e.path), (T $e.name), (T $e.tiering), (T $e.health))
+            }
+        }
+    }
+    L ''
+    V 'sync topology' "az rest --method get --url `"$armBase/syncGroups?api-version=$apiVer`" --query 'value[].name' -o tsv"
+}
+
 # ----------------------------------------------------------------- backup ---
 L '## Backup'
 L ''
@@ -282,6 +341,215 @@ L "| AD DS join | $(if ($cfg.enableAdDsJoin) { 'configured for ' + $cfg.adDomain
 L ''
 V 'identity role' "az role assignment list --assignee $($ctx.identity.appId) --scope /subscriptions/$sub/resourceGroups/$rg -o table"
 
+# --------------------------------------------------------------- topology ---
+# Drawn from what was just read back, so it cannot describe something that is not there.
+# The markdown gets mermaid (GitHub renders it); the HTML gets inline SVG, because the report
+# has to open from a file share or an e-mail attachment with no network.
+
+$peFile = $pes | Where-Object { $_.privateLinkServiceConnections -and (@($_.privateLinkServiceConnections[0].groupIds) -contains 'file') } | Select-Object -First 1
+$peAfs  = $pes | Where-Object { $_.privateLinkServiceConnections -and (@($_.privateLinkServiceConnections[0].groupIds) -contains 'Afs') } | Select-Object -First 1
+function FirstIp { param($pe) if ($pe -and $pe.customDnsConfigs) { $a = @($pe.customDnsConfigs[0].ipAddresses); if ($a.Count) { return [string]$a[0] } } return $null }
+$ipFile = FirstIp $peFile
+$ipAfs  = FirstIp $peAfs
+$ipDns  = $(if ($inbound) { $inbound.ipConfigurations[0].privateIpAddress } else { $null })
+$srvName = $(if ($registered.Count) { $registered[0].name } else { $null })
+$srvPath = $null
+foreach ($g in $syncTopology) { foreach ($e in $g.serverEndpoints) { if (-not $srvPath) { $srvPath = $e.path } } }
+$shareList = (@($shares | ForEach-Object { $_.name }) -join ', ')
+if (-not $shareList) { $shareList = '(none)' }
+
+L '## Topology'
+L ''
+L 'What exists right now, drawn from the read-back above.'
+L ''
+L '```mermaid'
+L 'flowchart LR'
+L '  subgraph OP["On-premises"]'
+L ('    FS["' + $(if ($srvName) { $srvName } else { 'file server (none registered)' }) + '<br/>' + $(if ($srvPath) { $srvPath } else { 'no server endpoint' }) + '"]')
+L ('    DNS["on-premises DNS<br/>forward file.core.windows.net"]')
+L '  end'
+L ('  subgraph AZ["Azure - ' + $rg + '"]')
+L ('    direction TB')
+L ('    subgraph VN["' + $cfg.vnetName + '"]')
+L ('      PEF["private endpoint (file)<br/>' + $(if ($ipFile) { $ipFile } else { 'not created' }) + '"]')
+L ('      PEA["private endpoint (Afs)<br/>' + $(if ($ipAfs) { $ipAfs } else { 'not created' }) + '"]')
+L ('      RES["DNS resolver inbound<br/>' + $(if ($ipDns) { $ipDns } else { 'not created' }) + '"]')
+L '    end'
+L ('    SA["' + $cfg.storageAccountName + '<br/>' + $shareList + '"]')
+L ('    SSS["' + $cfg.storageSyncServiceName + '"]')
+L ('    RSV["' + $(if ($vault) { $vault.name } else { 'no vault' }) + '<br/>' + $items.Count + ' protected"]')
+L '  end'
+L '  FS -->|sync| SSS'
+L '  FS -->|SMB 445| PEF'
+L '  DNS -.->|conditional forwarder| RES'
+L '  PEF --> SA'
+L '  PEA --> SSS'
+L '  SSS -->|Microsoft internal| SA'
+L '  RSV -->|Azure internal| SA'
+L '```'
+L ''
+
+# The same picture as SVG. Fixed layout, filled from the same values - no library, no network.
+function Esc { param($v) if ($null -eq $v) { return '' } return [System.Net.WebUtility]::HtmlEncode([string]$v) }
+function Box {
+    param([int]$X, [int]$Y, [int]$W, [int]$H, [string]$Title, [string]$Sub, [string]$Class = 'n')
+    $t = '<rect class="' + $Class + '" x="' + $X + '" y="' + $Y + '" width="' + $W + '" height="' + $H + '" rx="6"/>'
+    $t += '<text class="t" x="' + ($X + $W / 2) + '" y="' + ($Y + 22) + '" text-anchor="middle">' + (Esc $Title) + '</text>'
+    if ($Sub) { $t += '<text class="s" x="' + ($X + $W / 2) + '" y="' + ($Y + 40) + '" text-anchor="middle">' + (Esc $Sub) + '</text>' }
+    return $t
+}
+$g = New-Object System.Text.StringBuilder
+[void]$g.Append('<svg viewBox="0 0 900 430" role="img" aria-label="Topology of what was built" xmlns="http://www.w3.org/2000/svg">')
+[void]$g.Append('<style>
+ .zone{fill:none;stroke:var(--line);stroke-dasharray:5 4}
+ .zt{fill:var(--muted);font:600 11px "Segoe UI",system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase}
+ .n{fill:var(--surface);stroke:var(--line)}
+ .a{fill:var(--surface-3);stroke:var(--accent)}
+ .t{fill:var(--ink);font:600 12px "Segoe UI",system-ui,sans-serif}
+ .s{fill:var(--muted);font:11px "Segoe UI",system-ui,sans-serif}
+ .l{stroke:var(--accent);fill:none;marker-end:url(#ah)}
+ .ld{stroke:var(--muted);fill:none;stroke-dasharray:4 3;marker-end:url(#ah)}
+ .ll{fill:var(--muted);font:10px "Segoe UI",system-ui,sans-serif}
+</style>')
+[void]$g.Append('<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--accent)"/></marker></defs>')
+# zones
+[void]$g.Append('<rect class="zone" x="8" y="30" width="210" height="330" rx="8"/><text class="zt" x="16" y="24">On-premises</text>')
+[void]$g.Append('<rect class="zone" x="258" y="30" width="634" height="330" rx="8"/><text class="zt" x="266" y="24">Azure - ' + (Esc $rg) + '</text>')
+[void]$g.Append('<rect class="zone" x="278" y="60" width="240" height="270" rx="8"/><text class="zt" x="286" y="54">' + (Esc $cfg.vnetName) + '</text>')
+# on-premises
+[void]$g.Append((Box 24 70 180 56 $(if ($srvName) { $srvName } else { 'no file server' }) $(if ($srvPath) { $srvPath } else { 'no server endpoint' }) 'a'))
+[void]$g.Append((Box 24 250 180 56 'on-premises DNS' 'file.core.windows.net'))
+# vnet
+[void]$g.Append((Box 294 80 208 52 'private endpoint (file)' $(if ($ipFile) { $ipFile } else { 'not created' })))
+[void]$g.Append((Box 294 160 208 52 'private endpoint (Afs)' $(if ($ipAfs) { $ipAfs } else { 'not created' })))
+[void]$g.Append((Box 294 250 208 52 'DNS resolver inbound' $(if ($ipDns) { $ipDns } else { 'not created' })))
+# services
+[void]$g.Append((Box 600 74 270 64 $cfg.storageAccountName $shareList 'a'))
+[void]$g.Append((Box 600 168 270 52 $cfg.storageSyncServiceName 'Storage Sync Service'))
+[void]$g.Append((Box 600 250 270 56 $(if ($vault) { $vault.name } else { 'no vault' }) ($items.Count.ToString() + ' protected item(s)')))
+# links
+[void]$g.Append('<path class="l" d="M204 92 C 420 92, 430 186, 596 190"/><text class="ll" x="380" y="128">sync</text>')
+[void]$g.Append('<path class="l" d="M204 110 L 290 108"/><text class="ll" x="214" y="126">SMB 445</text>')
+[void]$g.Append('<path class="ld" d="M204 276 L 290 276"/><text class="ll" x="208" y="292">forwarder</text>')
+[void]$g.Append('<path class="l" d="M502 106 L 596 106"/>')
+[void]$g.Append('<path class="l" d="M502 186 L 596 190"/>')
+[void]$g.Append('<path class="l" d="M735 168 L 735 142"/><text class="ll" x="742" y="158">Microsoft internal</text>')
+[void]$g.Append('<path class="l" d="M735 250 C 560 240, 560 150, 596 120"/><text class="ll" x="540" y="228">backup, Azure internal</text>')
+[void]$g.Append('</svg>')
+$topologySvg = $g.ToString()
+
+# --------------------------------------------------------------- teardown ---
+# Everything needed to take this apart, in the order Azure accepts, including the two things
+# that do NOT live in the resource group and are therefore missed by deleting it.
+$adProps = $null
+if ($sa -and $sa.azureFilesIdentityBasedAuthentication -and $sa.azureFilesIdentityBasedAuthentication.activeDirectoryProperties) {
+    $adProps = $sa.azureFilesIdentityBasedAuthentication.activeDirectoryProperties
+}
+$ctxRel = 'deploy/deployment-context.json'
+
+L '## Teardown'
+L ''
+L ('Everything below was read from the live estate at ' + (Get-Date).ToUniversalTime().ToString('u') + '. The machine-readable form of the same')
+L ("inventory is ``" + (Split-Path -Leaf $base) + ".json`` beside this document - use it rather than retyping names.")
+L ''
+L '### What lives OUTSIDE the resource group'
+L ''
+L 'Deleting the resource group does not remove these, and each is easy to forget:'
+L ''
+L '| Object | Where | Identifier | Removed by |'
+L '|---|---|---|---|'
+L ("| Deployment identity | Entra ID | ``{0}`` ({1}) | ``az ad app delete --id {0}`` |" -f $ctx.identity.appId, $ctx.identity.displayName)
+if ($adProps) {
+    L ("| Storage account AD identity | {0} | ``{1}`` (SID {2}) | ``onprem/Join-AfsStorageAccountToAdDs.ps1 -Remove`` |" -f (T $adProps.domainName), (T $adProps.samAccountName), (T $adProps.azureStorageSid))
+} else {
+    L '| Storage account AD identity | - | not joined | - |'
+}
+foreach ($r in $registered) {
+    L ("| Registered file server | on-premises | ``{0}`` (agent {1}) | ``onprem/Install-AfsServerEndpoint.ps1 -Remove`` |" -f $r.name, (T $r.agentVersion))
+}
+if ($registered.Count -eq 0) { L '| Registered file server | - | none | - |' }
+L ''
+L '### Order'
+L ''
+L 'Not a preference - each step is refused while the one below it still exists.'
+L ''
+L '```text'
+L '1  server endpoints      onprem/Install-AfsServerEndpoint.ps1 -Remove   (recalls tiered files first)'
+L '2  cloud endpoints            "        (same run)'
+L '3  sync groups                "        (same run)'
+L '4  unregister the server      "        (same run)'
+L '5  AD DS join            onprem/Join-AfsStorageAccountToAdDs.ps1 -Remove'
+L '6  backup protection     deploy/Remove-AfsEnvironment.ps1              (disables with data deletion)'
+L '7  the vault + group          "        (same run)'
+L '8  the deployment identity    az ad app delete'
+L '```'
+L ''
+L ("    powershell -File onprem\\Install-AfsServerEndpoint.ps1 -Context " + $ctxRel + " -FileServer <server> -Remove")
+L ("    powershell -Command `"& './onprem/Join-AfsStorageAccountToAdDs.ps1' -Context '" + $ctxRel + "' -Remove -Confirm:`$false`"")
+L ("    powershell -Command `"& './deploy/Remove-AfsEnvironment.ps1' -Context '" + $ctxRel + "' -Confirm:`$false`"")
+L ("    az ad app delete --id " + $ctx.identity.appId)
+L ''
+L '### Two things that will surprise you'
+L ''
+L 'The **vault will not delete for 14 days** after protection is removed. Soft delete keeps the'
+L 'deleted backup data, and a vault holding it cannot be deleted - where a policy sets it to'
+L 'AlwaysON that cannot be turned off. The teardown detects this, removes every other resource'
+L 'individually, and prints the date to come back.'
+L ''
+L 'Azure File Sync takes a **share snapshot** when a cloud endpoint is created and never deletes'
+L 'it. Repeated build/teardown cycles accumulate them:'
+L ''
+L ("    az storage share list --account-name " + $cfg.storageAccountName + " --include-snapshots --query `"[?snapshot].{name:name,snapshot:snapshot}`" -o table")
+L ''
+L '### Every resource, with its id'
+L ''
+L '| Name | Type | Resource id |'
+L '|---|---|---|'
+foreach ($r in ($res | Sort-Object type, name)) { L ("| ``{0}`` | {1} | ``{2}`` |" -f $r.name, $r.type, (T $r.id)) }
+L ''
+
+# the manifest - the same inventory, machine-readable, so a teardown never retypes a name
+$manifest = [ordered]@{
+    schema        = 'afs-as-built/1'
+    generatedUtc  = (Get-Date).ToUniversalTime().ToString('o')
+    generatedBy   = $who
+    subscriptionId= $sub
+    resourceGroup = $rg
+    location      = $cfg.location
+    namePrefix    = $cfg.namePrefix
+    identity      = [ordered]@{ appId = $ctx.identity.appId; displayName = $ctx.identity.displayName; role = $ctx.identity.role; scope = "/subscriptions/$sub/resourceGroups/$rg" }
+    storageAccount= [ordered]@{
+        name   = $cfg.storageAccountName
+        id     = $(if ($sa) { $sa.id } else { $null })
+        shares = @($shares | ForEach-Object { $_.name })
+        adJoin = $(if ($adProps) { [ordered]@{ domain = $adProps.domainName; samAccountName = $adProps.samAccountName; sid = $adProps.azureStorageSid; accountType = $adProps.accountType } } else { $null })
+    }
+    fileSync      = [ordered]@{
+        serviceName       = $cfg.storageSyncServiceName
+        registeredServers = @($registered)
+        syncGroups        = @($syncTopology)
+    }
+    backup        = [ordered]@{
+        vaultName      = $(if ($vault) { $vault.name } else { $null })
+        protectedItems = @($items | ForEach-Object { $_.name })
+    }
+    resources     = @($res | ForEach-Object { [ordered]@{ name = $_.name; type = $_.type; id = $_.id } })
+    teardownOrder = @(
+        'server endpoints, cloud endpoints, sync groups, unregister - onprem/Install-AfsServerEndpoint.ps1 -Remove',
+        'AD DS join - onprem/Join-AfsStorageAccountToAdDs.ps1 -Remove',
+        'backup protection, vault, resource group - deploy/Remove-AfsEnvironment.ps1',
+        # parenthesised: inside an array literal PowerShell reads 'string' + $var as TWO
+        # elements, which split this line across two entries in the manifest
+        ('deployment identity - az ad app delete --id ' + $ctx.identity.appId)
+    )
+    knownDelays   = @(
+        'the Recovery Services vault cannot be deleted for 14 days after protection is removed (soft delete)',
+        'Azure File Sync share snapshots taken at cloud endpoint creation are never removed automatically'
+    )
+}
+[System.IO.File]::WriteAllText("$base.json", ($manifest | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
+V 'the manifest this document was written from' ("Get-Content '" + $base + ".json' | ConvertFrom-Json")
+
 # ----------------------------------------------------------------- verify ---
 L '## Verify'
 L ''
@@ -320,7 +588,7 @@ if ($cur) { $sections += $cur }
 $enc = [System.Net.WebUtility]
 $h = New-Object System.Text.StringBuilder
 [void]$h.Append('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>As-built - ' + $enc::HtmlEncode($rg) + '</title><style>')
-[void]$h.Append(':root{--ink:#1b2430;--muted:#5b6673;--surface:#fff;--surface-2:#f4f6f8;--surface-3:#e9edf1;--line:#d8dde3;--accent:#0b5cab;--accent-strong:#083f78;--radius:8px}*{box-sizing:border-box}body{margin:0;background:var(--surface-2);color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,Arial,sans-serif}header{background:var(--accent-strong);color:#fff;padding:20px 32px 0}header h1{margin:0 0 4px;font-size:22px;font-weight:600}header .meta{color:#cfe0f3;font-size:13px;margin-bottom:14px}nav.tabs{display:flex;gap:2px;flex-wrap:wrap}nav.tabs button{background:rgba(255,255,255,.08);color:#dbe7f3;border:0;border-radius:6px 6px 0 0;padding:9px 16px;cursor:pointer;font-size:13px}nav.tabs button.active{background:var(--surface-2);color:var(--ink);font-weight:600}main{max-width:1280px;margin:0 auto;padding:22px 32px}section.tab{display:none}section.tab.active{display:block}h2{font-size:16px;margin:0 0 10px}h3{font-size:14px;margin:18px 0 8px}h4{font-size:13px;margin:14px 0 6px;color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:6px 0 14px}th,td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}th{background:var(--surface-3);font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:0}code{font-family:"IBM Plex Mono",Consolas,monospace;font-size:12px;background:var(--surface-3);padding:1px 4px;border-radius:3px}p{margin:6px 0}footer{color:#8a95a1;font-size:12px;padding:24px 32px;text-align:center}@media print{nav.tabs{display:none}section.tab{display:block!important;page-break-before:always}}')
+[void]$h.Append(':root{--ink:#1b2430;--muted:#5b6673;--surface:#fff;--surface-2:#f4f6f8;--surface-3:#e9edf1;--line:#d8dde3;--accent:#0b5cab;--accent-strong:#083f78;--radius:8px}*{box-sizing:border-box}body{margin:0;background:var(--surface-2);color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,Arial,sans-serif}header{background:var(--accent-strong);color:#fff;padding:20px 32px 0}header h1{margin:0 0 4px;font-size:22px;font-weight:600}header .meta{color:#cfe0f3;font-size:13px;margin-bottom:14px}nav.tabs{display:flex;gap:2px;flex-wrap:wrap}nav.tabs button{background:rgba(255,255,255,.08);color:#dbe7f3;border:0;border-radius:6px 6px 0 0;padding:9px 16px;cursor:pointer;font-size:13px}nav.tabs button.active{background:var(--surface-2);color:var(--ink);font-weight:600}main{max-width:1280px;margin:0 auto;padding:22px 32px}section.tab{display:none}section.tab.active{display:block}h2{font-size:16px;margin:0 0 10px}h3{font-size:14px;margin:18px 0 8px}h4{font-size:13px;margin:14px 0 6px;color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:6px 0 14px}th,td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}th{background:var(--surface-3);font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:0}code{font-family:"IBM Plex Mono",Consolas,monospace;font-size:12px;background:var(--surface-3);padding:1px 4px;border-radius:3px}p{margin:6px 0}.topo{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px;overflow-x:auto}.topo svg{width:100%;min-width:760px;height:auto}footer{color:#8a95a1;font-size:12px;padding:24px 32px;text-align:center}@media print{nav.tabs{display:none}section.tab{display:block!important;page-break-before:always}}')
 [void]$h.Append('</style></head><body><header><h1>As-built - ' + $enc::HtmlEncode($rg) + '</h1><div class="meta">Generated ' + $enc::HtmlEncode((Get-Date).ToUniversalTime().ToString('u')) + ' from the live estate by ' + $enc::HtmlEncode($who) + '</div><nav class="tabs">')
 $i = 0
 foreach ($s in $sections) { $cls = if ($i -eq 0) { ' class="active"' } else { '' }; [void]$h.Append('<button' + $cls + ' data-tab="t' + $i + '">' + $enc::HtmlEncode($s.t) + '</button>'); $i++ }
@@ -329,7 +597,13 @@ $i = 0
 foreach ($s in $sections) {
     $cls = if ($i -eq 0) { 'tab active' } else { 'tab' }
     [void]$h.Append('<section class="' + $cls + '" id="tab-t' + $i + '"><h2>' + $enc::HtmlEncode($s.t) + '</h2>')
-    [void]$h.Append((ConvertTo-AfsHtmlFromMarkdown -Markdown (($s.b -join "`n"))))
+    if ($s.t -eq 'Topology') {
+        # the SVG, not the mermaid source - the markdown keeps the mermaid so GitHub renders it
+        [void]$h.Append('<p>What exists right now, drawn from the read-back on the other tabs.</p>')
+        [void]$h.Append('<div class="topo">' + $topologySvg + '</div>')
+    } else {
+        [void]$h.Append((ConvertTo-AfsHtmlFromMarkdown -Markdown (($s.b -join "`n"))))
+    }
     [void]$h.Append('</section>'); $i++
 }
 [void]$h.Append('</main><footer>Every value was read from Azure at generation time. Prove any row with its command on the Verify tab.</footer>')
