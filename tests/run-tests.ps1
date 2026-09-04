@@ -108,6 +108,32 @@ if (Test-Path $guide) {
     Check (([regex]::Matches($h, '<marker id="')).Count -eq (@([regex]::Matches($h, '<marker id="([^"]+)"') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique).Count)) 'arrowhead marker ids are unique across diagrams'
 }
 
+# -- 5b. splatting ---------------------------------------------------------------------------
+# Splatting an ARRAY binds positionally, so @('-Context', $p) puts the literal '-Context' into
+# the first parameter. Two wizard flows shipped with that defect and nothing caught it, because
+# neither was exercised end to end. This is the cheap static check that would have.
+Write-Host '5b. splatting'
+$wizSrc = Get-Content (Join-Path $repo 'start.ps1') -Raw
+$perr = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseInput($wizSrc, [ref]$null, [ref]$perr)
+# every variable that is splatted somewhere in the file
+$splatted = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.Splatted }, $true) |
+              ForEach-Object { $_.VariablePath.UserPath } | Select-Object -Unique)
+$bad = @()
+foreach ($name in $splatted) {
+    # find its assignments; flag any that assign an ARRAY containing a '-Switch' looking string
+    $assigns = @($ast.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $n.Left.VariablePath.UserPath -eq $name }, $true))
+    foreach ($a in $assigns) {
+        $t = $a.Right.Extent.Text
+        if ($t -match '^\s*@\(' -and $t -match "'-[A-Za-z]") { $bad += ($name + ' = ' + $t) }
+    }
+}
+Check ($bad.Count -eq 0) "no splatted variable is built as an array of switch names$(if ($bad.Count) { ' -> ' + ($bad -join '; ') })"
+Check ($splatted -notcontains 'args') 'nothing splats $args (an automatic variable)'
+
 # -- 6. the wizard still parses ----------------------------------------------------------------
 Write-Host '6. wizard'
 $perr = $null

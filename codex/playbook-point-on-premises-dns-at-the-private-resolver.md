@@ -39,6 +39,24 @@ address. Also used to reverse that.
 
 ## Procedure
 
+0. **Two prerequisites on the machine you run from, before anything else.** Neither is obvious
+   from the failure they produce, and on 2026-09-04 both were missing at once.
+
+   - **The RSAT DnsServer module.** Without it `Get-DnsServerZone` does not exist, so reading
+     zones fails with "not recognized as the name of a cmdlet" - which surfaces as "cannot read
+     zones on that server" and sends people to check the DNS role, the network and their group
+     membership, none of which is the cause. Install once, elevated:
+     `Install-WindowsFeature RSAT-DNS-Server` on Windows Server, or
+     `Add-WindowsCapability -Online -Name Rsat.Dns.Tools~~~~0.0.1.0` on Windows 10/11.
+     Without it the script falls back to running the command on the DNS server over remoting,
+     which needs WinRM there and rights *there*.
+   - **An account that may read and write zones.** A domain controller will refuse a signed-in
+     account that is not in DnsAdmins or Domain Admins, and reports it as plain access denied.
+     Pass `-Credential`; the wizard offers to collect one. Being a domain user is not enough.
+
+   The script now distinguishes these two failures and names the real one, but the fix is still
+   on the operator's machine, so check them first.
+
 1. **Forward the PUBLIC zone, not the privatelink zone.** This is the step almost everyone gets
    wrong, so it is first.
 
@@ -126,6 +144,9 @@ vars:
     describe: comma-separated DNS servers to change
     required: true
 steps:
+  - name: check the two prerequisites on this machine
+    run: powershell -Command "'module: ' + [bool](Get-Module -ListAvailable DnsServer); 'zones: ' + @(Get-DnsServerZone -ComputerName <dns_servers> -ErrorAction SilentlyContinue).Count"
+    verify: the module reports True and the zone count is greater than zero; if not, install RSAT-DNS-Server and re-run with an account in DnsAdmins
   - name: dry run, which is also the safety check
     run: powershell -File onprem/Set-AfsDnsForwarders.ps1 -Context <context> -DnsServer <dns_servers> -WhatIf
     verify: the zones listed are the PUBLIC ones (file.core.windows.net, afs.azure.net), and the run either proves the resolver returns a private address or refuses
@@ -162,6 +183,7 @@ steps:
 
 ```json
 [
+  {"rule": "the operator machine can actually read zones before anything is written", "severity": "error", "check": "powershell -Command \"@(Get-DnsServerZone -ComputerName <dns_server> -ErrorAction Stop).Count\" returns a non-zero count; a cmdlet-not-found error means RSAT-DNS-Server is missing, access denied means -Credential is needed"},
   {"rule": "the forwarded zone is the public one, not privatelink", "severity": "error", "check": "Get-DnsServerZone -ComputerName <dns_server> | Where-Object ZoneType -eq 'Forwarder' lists file.core.windows.net and afs.azure.net, and does NOT rely on a privatelink.* forwarder, which is never consulted when the resolver forwards upstream"},
   {"rule": "the resolver returns a private address before any forwarder is created", "severity": "error", "check": "Resolve-DnsName -Name <account>.privatelink.file.core.windows.net -Server <inbound_ip> returns an RFC1918 address"},
   {"rule": "every resolver clients use was changed, not only the domain controllers", "severity": "error", "check": "for each DNS server in the estate, Get-DnsServerZone -Name file.core.windows.net -ComputerName <server> returns a Forwarder zone - AD replication reaches only domain controllers running the DNS role"},

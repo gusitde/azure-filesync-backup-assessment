@@ -341,9 +341,11 @@ are prompted - that is the whole reason this step exists. Most tenants
 refuse every resource-creating call from a session that has not done it."
         Write-Host ''
         Read-Host '  Press Enter to open the browser' | Out-Null
-        $args = @('login', '--only-show-errors', '-o', 'json')
-        if ($TenantId) { $args += @('--tenant', $TenantId) }
-        Invoke-Cli $args -AllowFailure | Out-Null
+        # Not splatted, so this one was never broken - but $args is an automatic variable and
+        # naming a local after it is how the governance defect stayed invisible for so long.
+        $loginArgs = @('login', '--only-show-errors', '-o', 'json')
+        if ($TenantId) { $loginArgs += @('--tenant', $TenantId) }
+        Invoke-Cli $loginArgs -AllowFailure | Out-Null
         $acct = Get-SignedInAccount
         if (-not $acct) { Write-Bad 'sign-in did not complete.'; return $null }
         Write-Good ("signed in as " + $acct.user.name)
@@ -654,18 +656,20 @@ It is read-only, it needs Reader at the management group, and it needs
 PowerShell 7, which this kit does not run on. The script sorts that out."
     $acct = Ensure-SignedIn
     if (-not $acct) { return }
-    $args = @('-Context', $script:ContextFile)
-    if (-not (Test-Path $script:ContextFile)) {
-        Write-Note 'no deployment context - assessing the subscription you are signed in to.'
-        $args = @()
-    }
+    # A HASHTABLE, not an array. Splatting an array binds POSITIONALLY, so @('-Context', $path)
+    # put the literal string '-Context' into $Context and the path into the next positional
+    # parameter - which is what "Deployment context not found: -Context" was reporting.
+    # ($args is also an automatic variable; assigning it inside a function is asking for trouble.)
+    $govArgs = @{}
+    if (Test-Path $script:ContextFile) { $govArgs.Context = $script:ContextFile }
+    else { Write-Note 'no deployment context - assessing the subscription you are signed in to.' }
     if (Read-YesNo -Question 'Dry run first?' -DefaultYes $true) {
-        try { & (Join-Path $script:Root 'Invoke-AfsGovernanceAssessment.ps1') @args -WhatIf }
+        try { & (Join-Path $script:Root 'Invoke-AfsGovernanceAssessment.ps1') @govArgs -WhatIf }
         catch { Show-AzureFailure -Message $_.Exception.Message -Context 'The dry run did not complete.' }
     }
     if (-not (Read-YesNo -Question 'Run it now? It can take a while on a large tenant.' -DefaultYes $true)) { return }
     try {
-        & (Join-Path $script:Root 'Invoke-AfsGovernanceAssessment.ps1') @args -Confirm:$false
+        & (Join-Path $script:Root 'Invoke-AfsGovernanceAssessment.ps1') @govArgs -Confirm:$false
     } catch {
         Write-AfsLogException -ErrorRecord $_ -Context 'governance assessment failed'
         Show-AzureFailure -Message $_.Exception.Message -Context 'The governance assessment did not complete.'
@@ -1069,8 +1073,9 @@ anything still reachable over the public endpoint."
 
     Push-Location $script:Root
     try {
-        $a = @('-ExportPath', $path, '-CustomerName', $customer)
-        if ($private) { $a += '-PrivateTrafficRequired' }
+        # Same defect as the governance flow had: an array splat binds positionally.
+        $a = @{ ExportPath = $path; CustomerName = $customer }
+        if ($private) { $a.PrivateTrafficRequired = $true }
         & (Join-Path $script:Root 'Assess-AzFileSyncExport.ps1') @a
         $html = Get-AfsReports | Where-Object { $_.Name -eq 'assessment.html' } | Select-Object -First 1
         if ($html -and (Read-YesNo -Question 'Open the HTML report now?' -DefaultYes $true)) {
