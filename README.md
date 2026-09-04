@@ -8,8 +8,13 @@ backup traffic on their ExpressRoute.
 
 **New here?** Run **`.\start.ps1`** - *Luca Az-Deploy plus*, the guided front door: it checks
 your prerequisites, asks what you want to do, and runs the right scripts in the right order.
-For the detail behind it, see [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) -
-dependencies, sign-in, and a walk-through of every script.
+Its first option, **How to use it**, opens
+[docs/HOW-TO-USE.html](docs/HOW-TO-USE.html) - the long-form guide, with a tab per task,
+diagrams, the real error messages, and the handful of choices that cannot be undone. It is one
+self-contained page, so it opens from a file share or a locked-down laptop with nothing
+installed. For the reference detail behind it, see
+[docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) - dependencies, sign-in, and a walk-through
+of every script.
 
 ## Two doors
 

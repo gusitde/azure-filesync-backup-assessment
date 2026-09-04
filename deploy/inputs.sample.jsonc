@@ -93,6 +93,28 @@
   // == OPTIONAL: override anything derived ==================================
   // Delete this whole section to accept the defaults. Anything you set here
   // wins over the derived value. Run with -ShowResolved to see what you get.
+  // == 5. The machines on your side (optional) ==============================
+  // Only used by the scripts under onprem\. Filling this in means the wizard
+  // offers your values instead of asking cold - and, just as usefully, shows
+  // the shape of the answer it expects. Leave it as it is to see the format.
+  "onPremises": {
+
+    // The file server to register, as a name PowerShell remoting can reach.
+    "fileServer": "fs01.corp.contoso.com",
+
+    // Which local folder on that server syncs to which Azure file share.
+    // Local NTFS paths only - never a mapped drive and never a UNC path.
+    "serverPaths": {
+      "dept-shares": "D:\\Shares\\dept-shares",
+      "home-drives": "D:\\Shares\\home-drives"
+    },
+
+    // Every DNS server your clients actually use, comma separated. Active
+    // Directory replicates a conditional forwarder only to domain controllers
+    // running the DNS role, so member servers and appliances belong here too.
+    "dnsServers": "dc01.corp.contoso.com, dc02.corp.contoso.com"
+  },
+
   "overrides": {
     // "resourceGroup": "rg-my-standard-name",
     // "storageAccountName": "mystorageacct01",

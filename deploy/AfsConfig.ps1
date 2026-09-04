@@ -309,6 +309,16 @@ function Resolve-AfsConfig {
     # backup policy name reflects the retention, so it is self-describing in the portal
     $cfg['backupPolicyName'] = Get-AfsProp $ovr 'backupPolicyName' ("afs-daily-$($cfg.backupRetentionDays)d")
 
+    # The machines on the customer's side. Optional - the on-premises scripts each take these
+    # as parameters - but carrying them here means the wizard can offer what you used last
+    # time, and show the expected shape of an answer instead of asking cold.
+    $op = Get-AfsProp $Inputs 'onPremises'
+    $cfg['onPremises'] = [pscustomobject]@{
+        fileServer  = [string](Get-AfsProp $op 'fileServer' '')
+        serverPaths = Get-AfsProp $op 'serverPaths' ([pscustomobject]@{})
+        dnsServers  = [string](Get-AfsProp $op 'dnsServers' '')
+    }
+
     # shares
     $shares = Get-AfsProp $ovr 'shares'
     if (-not $shares) {

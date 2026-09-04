@@ -642,14 +642,23 @@ Directory - so each asks before it does anything."
         try {
             switch ($c) {
                 0 {
-                    $server = Read-Answer -Question 'Which file server?' -Why 'A name this machine can reach over PowerShell remoting.' -Pattern '^[A-Za-z0-9._-]+$' -PatternHelp 'a computer name, for example fs01 or fs01.corp.example.com'
                     $ctx = Read-AfsJsonc -Path $script:ContextFile
+                    $onprem = Get-AfsProp $ctx.config 'onPremises'
+                    $defServer = [string](Get-AfsProp $onprem 'fileServer' '')
+                    $server = Read-Answer -Question 'Which file server?' -Why 'A name this machine can reach over PowerShell remoting.' -Default $defServer -Pattern '^[A-Za-z0-9._-]+$' -PatternHelp 'a computer name, for example fs01 or fs01.corp.example.com'
                     $shares = @(ConvertTo-Array $ctx.config.shares | ForEach-Object { $_.name })
+                    $paths = Get-AfsProp $onprem 'serverPaths'
                     $maps = @()
+                    $answered = @{}
                     foreach ($sh in $shares) {
-                        $ans = Read-Answer -Question ("Which folder on $server syncs to the share '" + $sh + "'?") -Why 'A local NTFS path. Leave empty to skip this share.' -AllowEmpty
-                        if ($ans) { $maps += ($sh + '=' + $ans) }
+                        # Offer what was used last time; failing that a well-formed example, so
+                        # the answer's shape is never something to guess at.
+                        $def = [string](Get-AfsProp $paths $sh '')
+                        if (-not $def) { $def = 'D:\Shares\' + $sh }
+                        $ans = Read-Answer -Question ("Which folder on $server syncs to the share '" + $sh + "'?") -Why 'A local NTFS path on that server - not a mapped drive or a UNC path. Leave empty to skip this share.' -Default $def -AllowEmpty
+                        if ($ans) { $maps += ($sh + '=' + $ans); $answered[$sh] = $ans }
                     }
+                    Save-AfsOnPremisesAnswers -FileServer $server -ServerPaths $answered
                     if ($maps.Count -eq 0) { Write-Note 'no folders given - nothing to do.'; break }
                     Write-Explain 'A dry run first, as always.'
                     & (Join-Path $script:OnPremDir 'Install-AfsServerEndpoint.ps1') -Context $script:ContextFile -FileServer $server -SharePath $maps -WhatIf
@@ -662,7 +671,10 @@ Directory - so each asks before it does anything."
 client on your network resolves Azure storage names. The script proves the
 resolver answers with a private address before it writes anything, and
 refuses if it does not."
-                    $servers = Read-Answer -Question 'Which DNS servers?' -Why 'Comma-separated. Name every resolver your clients use, not only the domain controllers.' -Pattern '^[A-Za-z0-9._,\s-]+$' -PatternHelp 'one or more computer names separated by commas'
+                    $ctxD = Read-AfsJsonc -Path $script:ContextFile
+                    $defDns = [string](Get-AfsProp (Get-AfsProp $ctxD.config 'onPremises') 'dnsServers' '')
+                    $servers = Read-Answer -Question 'Which DNS servers?' -Why 'Comma-separated. Name every resolver your clients use, not only the domain controllers - Active Directory replicates a forwarder to domain controllers running DNS and nowhere else.' -Default $defDns -Pattern '^[A-Za-z0-9._,\s-]+$' -PatternHelp 'one or more computer names separated by commas'
+                    Save-AfsOnPremisesAnswers -DnsServers $servers
                     & (Join-Path $script:OnPremDir 'Set-AfsDnsForwarders.ps1') -Context $script:ContextFile -DnsServer $servers -WhatIf
                     if (Read-YesNo -Question 'Do it for real?' -DefaultYes $false) {
                         & (Join-Path $script:OnPremDir 'Set-AfsDnsForwarders.ps1') -Context $script:ContextFile -DnsServer $servers -Confirm:$false
@@ -1060,6 +1072,66 @@ function Open-Target {
     }
 }
 
+function Invoke-HowToUseFlow {
+    <# The long-form guide. One self-contained page, so it opens from a file share, an
+       air-gapped jump box or a customer laptop with nothing installed. #>
+    Write-Title 'How to use it'
+    Write-Explain "The full guide: every screen, every decision, and the reasons behind the
+ones that cannot be undone. It opens in your browser and needs no network."
+
+    $guide = Join-Path $script:Root 'docs\HOW-TO-USE.html'
+    if (-not (Test-Path $guide)) {
+        Write-Bad ('the guide is missing from this copy of the kit: ' + $guide)
+        Write-Explain 'Pull the latest from the repository, or read docs/GETTING-STARTED.md instead.'
+        return
+    }
+
+    # Each tab is addressable, so "read the DNS part" does not mean "open it and hunt".
+    $tabs = @(
+        @{ id = 'start';     n = 'Start here';           d = 'What the kit is, the two doors, and every menu option.' },
+        @{ id = 'settings';  n = 'Deployment settings';  d = 'The four inputs, what is derived from them, and what cannot be changed later.' },
+        @{ id = 'build';     n = 'Build';                d = 'The two phases, the 17 steps, and what the as-built records.' },
+        @{ id = 'connect';   n = 'Connect your servers'; d = 'Agent and endpoint, DNS forwarders, AD DS join - the three steps that touch your machines.' },
+        @{ id = 'protect';   n = 'Backup and restore';   d = 'What to protect, which tier restores one file, and how to prove it.' },
+        @{ id = 'assess';    n = 'Assess';               d = 'Export read-only, assess offline, and what comes out.' },
+        @{ id = 'govern';    n = 'Governance';           d = 'The tenant-wide question, and what it needs to answer it.' },
+        @{ id = 'teardown';  n = 'Teardown';             d = 'The order, the two things outside the resource group, and the 14-day wait.' },
+        @{ id = 'trouble';   n = 'When it goes wrong';   d = 'Real messages from real runs, and what each one actually means.' },
+        @{ id = 'reference'; n = 'Reference';            d = 'Layout, dependencies, and the one-way doors in one list.' }
+    )
+
+    while ($true) {
+        Write-Host ''
+        $labels = @('Open the whole guide')
+        foreach ($t in $tabs) { $labels += $t.n + "`n         " + $t.d }
+        $labels += 'Back'
+
+        $c = Read-Choice -Question 'Where would you like to start?' -Options $labels
+        if ($c -eq ($labels.Count - 1)) { return }
+
+        # A fragment takes the reader straight to the section they asked for - but a
+        # fragment only means anything on a URI. Appending '#connect' to a Windows path
+        # just names a file that does not exist, so build the file:// form for that case.
+        $target = $guide
+        if ($c -gt 0) { $target = ([uri]$guide).AbsoluteUri + '#' + $tabs[$c - 1].id }
+        try {
+            Start-Process $target
+            Write-Good $target
+        } catch {
+            # Some locked-down machines have no handler for file:// even though they open
+            # .html happily. Losing the fragment beats losing the guide.
+            try {
+                Start-Process $guide
+                Write-Good $guide
+                if ($c -gt 0) { Write-Note ('opened at the top - the section you wanted is ' + $tabs[$c - 1].n + '.') }
+            } catch {
+                Write-Bad ('could not open a browser: ' + $_.Exception.Message)
+                Write-Explain ('Open this file by hand: ' + $guide)
+            }
+        }
+    }
+}
+
 function Invoke-DocsFlow {
     Write-Title 'Documentation'
     Write-Explain "What each document is for, so you can go straight to the one you need."
@@ -1171,6 +1243,7 @@ try {
 while ($true) {
     try {
         $c = Read-Choice -Question 'What would you like to do?' -Options @(
+            'How to use it - the full guide, with diagrams',
             'Deployment settings - names, region, network, backup, directory',
             'Build a new Azure File Sync environment',
             'Assess an existing environment',
@@ -1191,18 +1264,19 @@ while ($true) {
     }
     try {
         switch ($c) {
-            0 { Invoke-SettingsFlow }
-            1 { Invoke-BuildFlow }
-            2 { Invoke-AssessFlow }
-            3 { Invoke-GovernanceFlow }
-            4 { Invoke-RemoveFlow }
-            5 { [void](Test-Prerequisites -ForDeploy) }
-            6 { Invoke-DocsFlow }
-            7 { Invoke-CodexFlow }
-            8 { Invoke-OnPremisesFlow }
-            9 { Invoke-ResumeFlow }
-            10 { Invoke-ReportsFlow }
-            11 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
+            0 { Invoke-HowToUseFlow }
+            1 { Invoke-SettingsFlow }
+            2 { Invoke-BuildFlow }
+            3 { Invoke-AssessFlow }
+            4 { Invoke-GovernanceFlow }
+            5 { Invoke-RemoveFlow }
+            6 { [void](Test-Prerequisites -ForDeploy) }
+            7 { Invoke-DocsFlow }
+            8 { Invoke-CodexFlow }
+            9 { Invoke-OnPremisesFlow }
+            10 { Invoke-ResumeFlow }
+            11 { Invoke-ReportsFlow }
+            12 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
         }
     } catch {
         Write-AfsLogException -ErrorRecord $_ -Context 'flow failed'

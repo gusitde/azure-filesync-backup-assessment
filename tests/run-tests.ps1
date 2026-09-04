@@ -13,7 +13,8 @@ if (-not (Test-Path (Join-Path $fixture 'manifest.json'))) { throw "fixture miss
 $tmp = Join-Path $env:TEMP ("afs-tests-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 $fail = 0
-function Check([bool]$ok, [string]$what) { if ($ok) { Write-Host "  PASS  $what" } else { Write-Host "  FAIL  $what" -ForegroundColor Red; $script:fail++ } }
+$total = 0
+function Check([bool]$ok, [string]$what) { $script:total++; if ($ok) { Write-Host "  PASS  $what" } else { Write-Host "  FAIL  $what" -ForegroundColor Red; $script:fail++ } }
 
 # -- 1. catalog --------------------------------------------------------------------------
 Write-Host '1. rule catalog'
@@ -71,7 +72,49 @@ $out3 = Join-Path $tmp 'zip'
 $f3 = (Get-Content (Join-Path $out3 'findings.json') -Raw | ConvertFrom-Json)
 Check ($f3.counts.High -eq $f1.counts.High -and $f3.counts.Medium -eq $f1.counts.Medium) 'zip and folder inputs give identical counts'
 
+
+# -- 5. the how-to guide ---------------------------------------------------------------------
+# A guide that has drifted from the tool teaches the wrong thing confidently, which is worse
+# than no guide. These checks are cheap and they are the ones that catch drift.
+Write-Host '5. how-to guide'
+$guide = Join-Path $repo 'docs\HOW-TO-USE.html'
+Check (Test-Path $guide) 'docs/HOW-TO-USE.html ships with the kit'
+if (Test-Path $guide) {
+    $h = Get-Content $guide -Raw
+    $wiz = Get-Content (Join-Path $repo 'start.ps1') -Raw
+
+    # the wizard can actually open it
+    Check ($wiz -like '*How to use it - the full guide*') 'the wizard menu offers it'
+    Check ($wiz -like '*function Invoke-HowToUseFlow*')   'the flow behind the menu entry exists'
+
+    # every tab button has a section, and the wizard names only sections that exist
+    $tabs = @([regex]::Matches($h, 'data-tab="([a-z]+)"')     | ForEach-Object { $_.Groups[1].Value })
+    $secs = @([regex]::Matches($h, 'id="tab-([a-z]+)"')       | ForEach-Object { $_.Groups[1].Value })
+    Check ($tabs.Count -eq 10) "the guide has 10 tabs (got $($tabs.Count))"
+    Check (@($tabs | Where-Object { $secs -notcontains $_ }).Count -eq 0) 'every tab button has a section behind it'
+    $flow = $wiz.Substring($wiz.IndexOf('function Invoke-HowToUseFlow'))
+    $flow = $flow.Substring(0, $flow.IndexOf('function Invoke-DocsFlow'))
+    $wizIds = @([regex]::Matches($flow, "id = '([a-z]+)'") | ForEach-Object { $_.Groups[1].Value })
+    Check ($wizIds.Count -eq $secs.Count) "the wizard lists every section ($($wizIds.Count) of $($secs.Count))"
+    Check (@($wizIds | Where-Object { $secs -notcontains $_ }).Count -eq 0) 'every section the wizard offers exists in the page'
+
+    # it has to render on a machine with no network - that is the point of a handover document
+    $ext = @([regex]::Matches($h, '(?:src|href)="(?!#)([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+    Check ($ext.Count -eq 0) "no external asset is fetched (found: $($ext -join ', '))"
+
+    # the diagrams are the first thing an edit breaks
+    Check (([regex]::Matches($h, '<svg')).Count -eq ([regex]::Matches($h, '</svg>')).Count) 'every <svg> is closed'
+    Check (([regex]::Matches($h, '<svg')).Count -eq 4) 'all four diagrams are present'
+    Check (([regex]::Matches($h, '<marker id="')).Count -eq (@([regex]::Matches($h, '<marker id="([^"]+)"') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique).Count)) 'arrowhead marker ids are unique across diagrams'
+}
+
+# -- 6. the wizard still parses ----------------------------------------------------------------
+Write-Host '6. wizard'
+$perr = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'start.ps1'), [ref]$null, [ref]$perr)
+Check (-not ($perr -and $perr.Count)) "start.ps1 parses clean$(if ($perr -and $perr.Count) { ' - line ' + $perr[0].Extent.StartLineNumber + ': ' + $perr[0].Message })"
+
 Write-Host ''
-if ($fail -eq 0) { Write-Host "ALL GREEN ($($expected.Count + $notExpected.Count + 14) checks)" -ForegroundColor Green } else { Write-Host "$fail check(s) FAILED" -ForegroundColor Red }
+if ($fail -eq 0) { Write-Host "ALL GREEN ($total checks)" -ForegroundColor Green } else { Write-Host "$fail check(s) FAILED" -ForegroundColor Red }
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 exit $fail

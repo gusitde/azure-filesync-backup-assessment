@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Luca Az-Deploy plus - how to use it</title>
+<style>
+:root{--ink:#1b2430;--muted:#5b6673;--surface:#fff;--surface-2:#f4f6f8;--surface-3:#e9edf1;--line:#d8dde3;--accent:#0b5cab;--accent-strong:#083f78;--header-bg:#083f78;--header-ink:#fff;--header-sub:#cfe0f3;--header-tab:#dbe7f3;--warn:#a8560a;--bad:#a02a2a;--good:#1d6b3f;--radius:8px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ink:#e6ebf1;--muted:#9aa6b4;--surface:#161b22;--surface-2:#0d1117;--surface-3:#1f262e;--line:#2f3843;--accent:#5aa9f5;--accent-strong:#8cc4fb;--warn:#e0a458;--bad:#f08a8a;--good:#6fce9a;--header-bg:#101c27;--header-ink:#eaf1f8;--header-sub:#9fb6cc;--header-tab:#c3d4e4}}
+:root[data-theme="dark"]{--ink:#e6ebf1;--muted:#9aa6b4;--surface:#161b22;--surface-2:#0d1117;--surface-3:#1f262e;--line:#2f3843;--accent:#5aa9f5;--accent-strong:#8cc4fb;--warn:#e0a458;--bad:#f08a8a;--good:#6fce9a;--header-bg:#101c27;--header-ink:#eaf1f8;--header-sub:#9fb6cc;--header-tab:#c3d4e4}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface-2);color:var(--ink);font:15px/1.65 "Segoe UI",system-ui,-apple-system,Arial,sans-serif}
+header{background:var(--header-bg);color:var(--header-ink);padding:26px 32px 0}
+header h1{margin:0 0 4px;font-size:24px;font-weight:600;letter-spacing:-.01em}
+header .sub{color:var(--header-sub);font-size:14px;margin-bottom:18px;max-width:70ch}
+nav.tabs{display:flex;gap:2px;flex-wrap:wrap}
+nav.tabs button{background:rgba(255,255,255,.10);color:var(--header-tab);border:0;border-radius:6px 6px 0 0;padding:10px 15px;cursor:pointer;font-size:13.5px;font-family:inherit}
+nav.tabs button:hover{background:rgba(255,255,255,.18)}
+nav.tabs button.active{background:var(--surface-2);color:var(--ink);font-weight:600}
+main{max-width:1120px;margin:0 auto;padding:26px 32px 60px}
+section.tab{display:none}section.tab.active{display:block;animation:in .18s ease}
+@keyframes in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+h2{font-size:21px;margin:0 0 6px;letter-spacing:-.01em}
+h3{font-size:16px;margin:30px 0 8px;padding-top:14px;border-top:1px solid var(--line)}
+h3:first-of-type{border-top:0;padding-top:0}
+h4{font-size:14px;margin:18px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+p{margin:9px 0;max-width:82ch}
+ul,ol{max-width:82ch;padding-left:22px}li{margin:5px 0}
+code{font-family:"Cascadia Mono",Consolas,monospace;font-size:12.5px;background:var(--surface-3);padding:1.5px 5px;border-radius:3px}
+pre{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:var(--radius);padding:13px 15px;overflow-x:auto;margin:12px 0}
+pre code{background:none;padding:0;font-size:12.5px;line-height:1.55}
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:12px 0;font-size:14px}
+th,td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:var(--surface-3);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+.lead{font-size:16.5px;color:var(--muted);max-width:76ch;margin:0 0 4px}
+.note{border-left:3px solid var(--accent);background:var(--surface);padding:11px 15px;border-radius:0 var(--radius) var(--radius) 0;margin:14px 0;max-width:82ch}
+.warn{border-left-color:var(--warn)}
+.bad{border-left-color:var(--bad)}
+.good{border-left-color:var(--good)}
+.note .lbl{display:block;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:3px;color:var(--muted)}
+.fig{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin:16px 0;overflow-x:auto}
+.fig svg{width:100%;min-width:640px;height:auto;display:block}
+.fig figcaption{color:var(--muted);font-size:13px;margin-top:9px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:12px;margin:14px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px 15px}
+.card h5{margin:0 0 5px;font-size:14px}
+.card p{margin:0;font-size:13.5px;color:var(--muted)}
+.steps{counter-reset:s;list-style:none;padding-left:0}
+.steps>li{counter-increment:s;position:relative;padding-left:38px;margin:14px 0}
+.steps>li::before{content:counter(s);position:absolute;left:0;top:0;width:25px;height:25px;border-radius:50%;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;display:flex;align-items:center;justify-content:center}
+footer{color:var(--muted);font-size:12.5px;padding:22px 32px;text-align:center;border-top:1px solid var(--line)}
+.k{color:var(--accent);font-weight:600}
+svg text{font-family:"Segoe UI",system-ui,sans-serif}
+.n{fill:var(--surface);stroke:var(--line)}
+.a{fill:var(--surface-3);stroke:var(--accent)}
+.zone{fill:none;stroke:var(--line);stroke-dasharray:5 4}
+.t{fill:var(--ink);font-size:12px;font-weight:600}
+.s{fill:var(--muted);font-size:11px}
+.zt{fill:var(--muted);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+.l{stroke:var(--accent);fill:none}
+.ld{stroke:var(--muted);fill:none;stroke-dasharray:4 3}
+.ll{fill:var(--muted);font-size:10.5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Luca Az-Deploy plus</h1>
+  <div class="sub">Azure File Sync and Azure Backup - assess an estate, build one, connect your own servers, and take it all apart again. This is the long-form guide; every screen, every decision, and the reasons behind the ones that cannot be undone.</div>
+  <nav class="tabs">
+    <button class="active" data-tab="start">Start here</button>
+    <button data-tab="settings">Settings</button>
+    <button data-tab="build">Build</button>
+    <button data-tab="connect">Connect your servers</button>
+    <button data-tab="protect">Backup &amp; restore</button>
+    <button data-tab="assess">Assess</button>
+    <button data-tab="govern">Governance</button>
+    <button data-tab="teardown">Teardown</button>
+    <button data-tab="trouble">When it goes wrong</button>
+    <button data-tab="reference">Reference</button>
+  </nav>
+</header>
+<main>
+
+<!-- ============================================================ START -->
+<section class="tab active" id="tab-start">
+  <h2>Start here</h2>
+  <p class="lead">One command opens everything. Nothing changes without showing you first and asking.</p>
+
+  <pre><code>cd &lt;the kit folder&gt;
+.\start.ps1</code></pre>
+
+  <h3>The shape of the thing</h3>
+  <p>The kit answers two different questions, and it is worth knowing which one you are asking before you start.</p>
+  <div class="cards">
+    <div class="card"><h5>Assess</h5><p>An estate already exists. Export it read-only, and get findings against roughly eighty rules. Needs nothing but Reader.</p></div>
+    <div class="card"><h5>Build</h5><p>Nothing exists, or the customer will not share what does. Build the target design from four inputs, then connect real servers to it.</p></div>
+  </div>
+  <p>Both converge on <code>codex/</code> - the blueprints that describe the target state, the playbooks that build it, and the runbooks for when it breaks.</p>
+
+  <h3>What gets built</h3>
+  <figure class="fig">
+    <svg viewBox="0 0 900 400" role="img" aria-label="What the build creates and how the pieces connect">
+      <defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--accent)"/></marker></defs>
+      <rect class="zone" x="8" y="28" width="212" height="332" rx="8"/><text class="zt" x="16" y="22">Your network</text>
+      <rect class="zone" x="256" y="28" width="636" height="332" rx="8"/><text class="zt" x="264" y="22">Azure</text>
+      <rect class="zone" x="276" y="58" width="238" height="276" rx="8"/><text class="zt" x="284" y="52">virtual network</text>
+
+      <rect class="a" x="24" y="70" width="180" height="56" rx="6"/><text class="t" x="114" y="94" text-anchor="middle">file server</text><text class="s" x="114" y="112" text-anchor="middle">agent + server endpoint</text>
+      <rect class="n" x="24" y="176" width="180" height="52" rx="6"/><text class="t" x="114" y="199" text-anchor="middle">your DNS</text><text class="s" x="114" y="216" text-anchor="middle">conditional forwarder</text>
+      <rect class="n" x="24" y="272" width="180" height="52" rx="6"/><text class="t" x="114" y="295" text-anchor="middle">Active Directory</text><text class="s" x="114" y="312" text-anchor="middle">storage account object</text>
+
+      <rect class="n" x="292" y="80" width="206" height="50" rx="6"/><text class="t" x="395" y="102" text-anchor="middle">private endpoint (file)</text><text class="s" x="395" y="119" text-anchor="middle">SMB 445</text>
+      <rect class="n" x="292" y="158" width="206" height="50" rx="6"/><text class="t" x="395" y="180" text-anchor="middle">private endpoint (Afs)</text><text class="s" x="395" y="197" text-anchor="middle">four sync names</text>
+      <rect class="n" x="292" y="254" width="206" height="52" rx="6"/><text class="t" x="395" y="277" text-anchor="middle">DNS Private Resolver</text><text class="s" x="395" y="294" text-anchor="middle">inbound endpoint</text>
+
+      <rect class="a" x="596" y="74" width="272" height="62" rx="6"/><text class="t" x="732" y="97" text-anchor="middle">storage account</text><text class="s" x="732" y="115" text-anchor="middle">the file shares live here</text>
+      <rect class="n" x="596" y="164" width="272" height="50" rx="6"/><text class="t" x="732" y="186" text-anchor="middle">Storage Sync Service</text><text class="s" x="732" y="203" text-anchor="middle">sync group + cloud endpoint</text>
+      <rect class="n" x="596" y="248" width="272" height="56" rx="6"/><text class="t" x="732" y="271" text-anchor="middle">Recovery Services vault</text><text class="s" x="732" y="289" text-anchor="middle">daily snapshots</text>
+
+      <path class="l" d="M204 90 C 420 88, 430 180, 592 186" marker-end="url(#ah)"/><text class="ll" x="372" y="128">sync</text>
+      <path class="l" d="M204 108 L 288 106" marker-end="url(#ah)"/>
+      <path class="ld" d="M204 200 L 288 262" marker-end="url(#ah)"/><text class="ll" x="208" y="238">forward</text>
+      <path class="l" d="M498 104 L 592 104" marker-end="url(#ah)"/>
+      <path class="l" d="M498 182 L 592 186" marker-end="url(#ah)"/>
+      <path class="l" d="M732 164 L 732 140" marker-end="url(#ah)"/><text class="ll" x="740" y="156">stays inside Microsoft</text>
+      <path class="l" d="M732 248 C 560 236, 560 148, 592 120" marker-end="url(#ah)"/><text class="ll" x="524" y="226">backup</text>
+      <path class="ld" d="M204 292 C 400 330, 560 330, 660 310" marker-end="url(#ah)"/><text class="ll" x="360" y="348">domain join</text>
+    </svg>
+    <figcaption>Solid lines are traffic. Dashed lines are configuration that points one thing at another. The sync service reaches the storage account inside Microsoft's network - that leg is never yours to route.</figcaption>
+  </figure>
+
+  <h3>The menu</h3>
+  <table>
+    <tr><th style="width:38px">#</th><th>Option</th><th>Use it when</th></tr>
+    <tr><td>1</td><td>Deployment settings</td><td>Before your first build, and any time a name, range or retention needs to change.</td></tr>
+    <tr><td>2</td><td>Build</td><td>Create the environment. Runs a dry run first, every time.</td></tr>
+    <tr><td>3</td><td>Assess an existing environment</td><td>You have an export zip and want findings.</td></tr>
+    <tr><td>4</td><td>Assess policy and governance</td><td>The question moved from this estate to the tenant around it.</td></tr>
+    <tr><td>5</td><td>Remove an environment</td><td>Tear down what you built. Refuses if the group holds anything it does not recognise.</td></tr>
+    <tr><td>6</td><td>Check prerequisites</td><td>First run on a new machine, or something behaved oddly.</td></tr>
+    <tr><td>7</td><td>Read the documentation</td><td>This guide and the written docs.</td></tr>
+    <tr><td>8</td><td>Blueprints, playbooks and runbooks</td><td>The reasoning behind the design, and the repair procedures.</td></tr>
+    <tr><td>9</td><td>Connect your on-premises servers</td><td>The three steps that touch machines you own.</td></tr>
+    <tr><td>10</td><td>Resume the last build</td><td>A build stopped part way. Idempotent, so it continues rather than restarting.</td></tr>
+    <tr><td>11</td><td>Open the reports</td><td>Findings, as-built documents, governance output.</td></tr>
+  </table>
+
+  <div class="note good"><span class="lbl">The habit worth keeping</span>Every destructive or outward-facing step runs a dry run first and asks before the real one. If a script ever changes something without telling you, that is a bug - report it.</div>
+</section>
+
+<!-- ========================================================= SETTINGS -->
+<section class="tab" id="tab-settings">
+  <h2>Deployment settings</h2>
+  <p class="lead">Four inputs decide everything. The rest is derived, and every derived value is yours to override.</p>
+
+  <h3>The four things only you can answer</h3>
+  <table>
+    <tr><th>Input</th><th>Why it is asked</th></tr>
+    <tr><td>Entra global admin</td><td>Used <em>once</em>, by phase 1, to create the deployment identity and grant it a role. Never used again.</td></tr>
+    <tr><td>Subscription and name prefix</td><td>Where it is built, and the one naming decision you make.</td></tr>
+    <tr><td>AD admin account</td><td>Creates the storage account's object in your directory. Needs the right to create an object in one OU - <strong>not</strong> Domain Admin.</td></tr>
+    <tr><td>AD basics</td><td>Domain, NetBIOS name, the OU, and whether the object is a computer or a service logon account.</td></tr>
+  </table>
+
+  <h3>Derived, not fixed</h3>
+  <p>A prefix of <code>contoso</code> in <code>eastus</code> produces:</p>
+  <pre><code>rg-contoso-filesync        the resource group
+stcontosofs01              the storage account
+sss-contoso-filesync       the Storage Sync Service
+rsv-contoso-eastus         the Recovery Services vault
+vnet-contoso-filesync      the virtual network
+dnspr-contoso-eastus       the DNS Private Resolver</code></pre>
+  <p>Change the prefix and all six move together. Set one explicitly and it stops following - the settings screen marks which is which with <code>(derived)</code>. Clearing a value hands it back.</p>
+
+  <div class="note"><span class="lbl">Why this matters</span>Consistent names are not cosmetics. When someone finds <code>rsv-contoso-eastus</code> in six months, the prefix tells them which estate it belongs to and the suffix tells them the region. A hand-picked name tells them nothing.</div>
+
+  <h3>Settings that cannot be taken back</h3>
+  <table>
+    <tr><th>Setting</th><th>Why it is one-way</th></tr>
+    <tr><td>Storage redundancy</td><td>Zone-redundant cannot return to locally redundant. Changing it afterwards is a data migration, not a setting.</td></tr>
+    <tr><td>Vault redundancy</td><td>Fixed once the first item is protected. The build sets it before protecting anything, deliberately.</td></tr>
+    <tr><td>Cross-region restore</td><td>Same window, same reason. Geo-redundant only.</td></tr>
+    <tr><td>Resource group name</td><td>Azure has no rename. It is a delete and rebuild.</td></tr>
+  </table>
+
+  <h3>Remembering your own machines</h3>
+  <p>The <code>onPremises</code> section holds the file server, the folder for each share, and your DNS servers. Fill it in and the wizard offers those values instead of asking cold - and, just as usefully, it shows the shape of the answer it expects.</p>
+  <pre><code>"onPremises": {
+  "fileServer": "fs01.corp.contoso.com",
+  "serverPaths": {
+    "dept-shares": "D:\\Shares\\dept-shares"
+  },
+  "dnsServers": "dc01.corp.contoso.com, dc02.corp.contoso.com"
+}</code></pre>
+  <p>You do not have to edit the file. Answer the questions once and the wizard writes them back for next time.</p>
+
+  <div class="note warn"><span class="lbl">A gap worth knowing</span>Settings are read when <em>phase 1</em> writes the deployment context. Build re-runs phase 1 and picks up your edits. <strong>Resume deliberately does not</strong> - it exists to continue a deployment already under way. The settings screen warns you when the two have drifted apart.</div>
+</section>
+
+<!-- ============================================================ BUILD -->
+<section class="tab" id="tab-build">
+  <h2>Build</h2>
+  <p class="lead">Two phases. The first needs a person; the second needs nobody.</p>
+
+  <figure class="fig">
+    <svg viewBox="0 0 880 220" role="img" aria-label="Phase 1 creates an identity, phase 2 uses it">
+      <defs><marker id="ah2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--accent)"/></marker></defs>
+      <rect class="a" x="16" y="52" width="228" height="104" rx="8"/>
+      <text class="t" x="130" y="80" text-anchor="middle">Phase 1 - once, by you</text>
+      <text class="s" x="130" y="102" text-anchor="middle">signs in as the global admin</text>
+      <text class="s" x="130" y="120" text-anchor="middle">creates the deployment identity</text>
+      <text class="s" x="130" y="138" text-anchor="middle">grants it Contributor on ONE group</text>
+
+      <rect class="n" x="326" y="66" width="200" height="76" rx="8"/>
+      <text class="t" x="426" y="94" text-anchor="middle">deployment-context.json</text>
+      <text class="s" x="426" y="114" text-anchor="middle">the resolved names</text>
+      <text class="s" x="426" y="130" text-anchor="middle">plus the identity</text>
+
+      <rect class="a" x="608" y="52" width="256" height="104" rx="8"/>
+      <text class="t" x="736" y="80" text-anchor="middle">Phase 2 - unattended</text>
+      <text class="s" x="736" y="102" text-anchor="middle">signs in as that identity</text>
+      <text class="s" x="736" y="120" text-anchor="middle">builds 17 idempotent steps</text>
+      <text class="s" x="736" y="138" text-anchor="middle">writes the as-built</text>
+
+      <path class="l" d="M244 104 L 322 104" marker-end="url(#ah2)"/><text class="ll" x="252" y="96">writes</text>
+      <path class="l" d="M526 104 L 604 104" marker-end="url(#ah2)"/><text class="ll" x="534" y="96">reads</text>
+      <text class="zt" x="16" y="196">Your own sign-in is never replaced. Phase 1 checks the new identity works before phase 2 depends on it.</text>
+    </svg>
+    <figcaption>The context file is where the identity and the build definition meet. Both phases resolve names through the same code, so they cannot disagree.</figcaption>
+  </figure>
+
+  <h3>What phase 2 does, in order</h3>
+  <ol class="steps">
+    <li><strong>Preflight.</strong> CLI version, sign-in, subscription access, the <code>dns-resolver</code> extension, and the five resource providers the build needs - registering any that are not. A subscription that has never used a service has its provider switched off, and the first create fails with a message about namespaces that mentions nothing you did.</li>
+    <li><strong>Resource group, storage account, soft delete, shares.</strong> Share soft delete is set to 14 days before any data exists, because it cannot protect what was deleted before it was turned on.</li>
+    <li><strong>Network.</strong> Virtual network, the private endpoint subnet, both privatelink DNS zones, and a link from each zone to the network.</li>
+    <li><strong>Private endpoints.</strong> One for the storage account, one for the sync service, each with a DNS zone group that writes the address records. The sync service publishes <em>four</em> names, not one.</li>
+    <li><strong>DNS Private Resolver.</strong> A delegated subnet and an inbound endpoint - the address your own DNS will forward to. The slowest step, around two minutes.</li>
+    <li><strong>Vault, redundancy, policy, protection.</strong> Redundancy and cross-region restore are set <em>before</em> the first protected item, because afterwards they cannot be.</li>
+  </ol>
+
+  <div class="note"><span class="lbl">Idempotent means idempotent</span>Every step checks whether its object already exists. A failed build is fixed and run again - never unpicked. Running it twice changes nothing the second time.</div>
+
+  <h3>The as-built</h3>
+  <p>A successful build reads every object back from Azure and writes three files into <code>as-built/</code>:</p>
+  <table>
+    <tr><th>File</th><th>What it is for</th></tr>
+    <tr><td><code>.md</code></td><td>The written record, with a verify command for every row. A row is proven by its command, not by the document.</td></tr>
+    <tr><td><code>.html</code></td><td>The same thing with a tab per section and a topology diagram, openable from a file share with no network.</td></tr>
+    <tr><td><code>.json</code></td><td>The manifest: every resource with its id, the sync topology, the AD join, and the teardown order. Drive a teardown from this rather than retyping names.</td></tr>
+  </table>
+  <p>Nothing in it is transcribed by hand, so it cannot describe something that is not there.</p>
+</section>
+
+<!-- ========================================================== CONNECT -->
+<section class="tab" id="tab-connect">
+  <h2>Connect your on-premises servers</h2>
+  <p class="lead">The build stops at the edge of Azure. Three steps happen on machines you own, and each one is riskier than anything before it.</p>
+
+  <h3>1 &middot; The File Sync agent and a server endpoint</h3>
+  <p>Installs the agent, registers the server, then creates the sync group, cloud endpoint and server endpoint. One run, over PowerShell remoting.</p>
+  <pre><code>.\onprem\Install-AfsServerEndpoint.ps1 `
+    -Context .\deploy\deployment-context.json `
+    -FileServer fs01.corp.contoso.com `
+    -SharePath 'dept-shares=D:\Shares\dept-shares'</code></pre>
+
+  <h4>Two identities, and why</h4>
+  <p>Registering the server and creating the sync group work under the deployment identity. <strong>Creating the cloud endpoint does not.</strong> That step grants the Azure File Sync service reader access to your storage account, which is a role assignment - and Contributor is explicitly not allowed to create one. So it runs as the signed-in operator, who must hold Owner, User Access Administrator, or Azure File Sync Administrator on the storage account. The script checks before it tries and prints the exact grant if not.</p>
+
+  <h4>Requirements on the server</h4>
+  <ul>
+    <li>Windows Server 2016, 2019, 2022 or 2025</li>
+    <li>.NET Framework 4.7.2 or later</li>
+    <li>The folder on a <strong>local NTFS volume</strong> - never a mapped drive, never a UNC path, and never the system volume if you want cloud tiering</li>
+    <li><code>Az.Accounts</code> and <code>Az.StorageSync</code> <em>on the server</em>, because registration only runs there. The script installs them, falling back to copying from your machine when the Gallery is unreachable.</li>
+  </ul>
+
+  <div class="note"><span class="lbl">Why the install looks odd</span>The agent installer closes PowerShell sessions while it runs - which would kill the very remoting session that started it. So it is launched from a scheduled task as SYSTEM and the script polls for the result. That is deliberate, not a workaround.</div>
+
+  <h3>2 &middot; Point your DNS at the resolver</h3>
+  <p>This has the widest blast radius of anything in the kit. Read this part before running it.</p>
+
+  <div class="note bad"><span class="lbl">The mistake almost everyone makes</span>A conditional forwarder on <code>privatelink.file.core.windows.net</code> <strong>never fires</strong>. Clients ask for the <em>public</em> name, and a recursive resolver returns the whole chain - public name, privatelink alias, address - in a single answer. No separate query for the privatelink name is ever issued. The forwarder is created, looks correct, passes a "does the zone exist" check, and does nothing at all. Forward the <strong>public</strong> zones: <code>file.core.windows.net</code> and <code>afs.azure.net</code>.</div>
+
+  <figure class="fig">
+    <svg viewBox="0 0 860 200" role="img" aria-label="The whole name chain returns in one answer">
+      <defs><marker id="ah3" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--accent)"/></marker></defs>
+      <rect class="a" x="14" y="70" width="176" height="54" rx="6"/><text class="t" x="102" y="92" text-anchor="middle">the client asks for</text><text class="s" x="102" y="110" text-anchor="middle">account.file.core.windows.net</text>
+      <rect class="n" x="250" y="70" width="182" height="54" rx="6"/><text class="t" x="341" y="92" text-anchor="middle">alias</text><text class="s" x="341" y="110" text-anchor="middle">account.privatelink...</text>
+      <rect class="n" x="492" y="70" width="150" height="54" rx="6"/><text class="t" x="567" y="92" text-anchor="middle">address</text><text class="s" x="567" y="110" text-anchor="middle">10.60.1.4</text>
+      <rect class="zone" x="238" y="52" width="418" height="92" rx="8"/>
+      <text class="zt" x="246" y="46">returned together, in one answer</text>
+      <path class="l" d="M190 96 L 246 96" marker-end="url(#ah3)"/>
+      <path class="l" d="M432 96 L 488 96" marker-end="url(#ah3)"/>
+      <text class="ll" x="700" y="86">A forwarder on the middle name</text>
+      <text class="ll" x="700" y="102">is never consulted - nothing</text>
+      <text class="ll" x="700" y="118">ever asks for it separately.</text>
+    </svg>
+    <figcaption>This is why the public zone is the one to forward. The alias only ever appears inside an answer that has already been resolved.</figcaption>
+  </figure>
+
+  <h4>The gate</h4>
+  <p>Once the public zone is forwarded, <em>every</em> query for it goes to the resolver. If the resolver cannot be reached, clients get a failure after about eleven seconds for every storage endpoint under that suffix - not just yours. Worse, a resolver that answers <em>wrongly</em> - refused, or a name error because the private zone is not linked to its network - has that answer handed straight back to the client with no fallback at all.</p>
+  <p>So the script does not test whether the resolver is reachable. It tests whether the resolver <strong>returns a private address</strong> for a name it should know, and refuses to write anything otherwise.</p>
+
+  <div class="note warn"><span class="lbl">Replication does not reach everything</span><code>-ReplicationScope Forest</code> reaches domain controllers <em>that run the DNS role</em>. Not member servers running DNS, not Infoblox, not BIND. Name every resolver your clients actually use, and verify each one.</div>
+
+  <h3>3 &middot; Domain-join the storage account</h3>
+  <p>Lets people reach the shares with the credentials they already have, so existing NTFS permissions still apply.</p>
+  <pre><code>.\onprem\Join-AfsStorageAccountToAdDs.ps1 `
+    -Context .\deploy\deployment-context.json `
+    -OrganizationalUnit 'OU=AzureFiles,DC=corp,DC=contoso,DC=com'</code></pre>
+  <p>It needs the RSAT Active Directory module, which is the one thing here that wants a local administrator - once:</p>
+  <pre><code>Install-WindowsFeature RSAT-AD-PowerShell     # elevated, once</code></pre>
+  <div class="note warn"><span class="lbl">A dry run is not inert here</span><code>Join-AzStorageAccount</code> validates in a block that runs <em>even under -WhatIf</em>, and on an unprepared machine it fails with "requires an elevated PowerShell session" - which points at the wrong problem entirely. The script checks the real prerequisites itself, first, so the message you get names the actual cause.</div>
+
+  <h4>A join on its own lets nobody in</h4>
+  <p>Two more layers decide access, and the most restrictive wins:</p>
+  <ol>
+    <li><strong>Share level.</strong> Who may reach the share at all. The default is nobody. Grant one of the SMB share roles, to a hybrid identity - a cloud-only account cannot be used.</li>
+    <li><strong>File level.</strong> The NTFS permissions inside it. Mount once with the account key and set them with <code>icacls</code>. Use <code>net use</code>, not <code>New-PSDrive</code>, or Explorer will not see the drive.</li>
+  </ol>
+</section>
+
+<!-- ========================================================== PROTECT -->
+<section class="tab" id="tab-protect">
+  <h2>Backup and restore</h2>
+  <p class="lead">Three surfaces get confused with each other. Only two of them should ever be backed up.</p>
+
+  <h3>What to protect, and what never to</h3>
+  <table>
+    <tr><th>Surface</th><th>Protect it with</th><th>Notes</th></tr>
+    <tr><td>The migrated virtual machine</td><td>Azure VM backup</td><td>Trusted Launch requires the Enhanced policy, and Enhanced cannot go back to Standard.</td></tr>
+    <tr><td>The Azure file share</td><td>Azure Files backup</td><td>This is the copy that matters.</td></tr>
+    <tr><td>The File Sync server endpoint</td><td><strong>Nothing</strong></td><td>It is a cache. A file-level agent walking tiered files pulls the entire dataset back down.</td></tr>
+  </table>
+
+  <div class="note bad"><span class="lbl">Never back up a File Sync cache</span>Tiered files are pointers. Any backup product that reads them forces a recall of everything - a bill and an outage at the same time. Back up the share; exclude the server endpoint path.</div>
+
+  <h3>Which tier restores a single file</h3>
+  <p>This decides whether you can answer "somebody deleted one spreadsheet".</p>
+  <table>
+    <tr><th>Tier</th><th>Restores</th><th>Retention</th></tr>
+    <tr><td>Snapshot</td><td><strong>Individual files and folders</strong></td><td>Up to 200 days</td></tr>
+    <tr><td>Vault-standard</td><td>The whole share only</td><td>Years, offsite, immutable</td></tr>
+  </table>
+  <p>A 60-day requirement fits the snapshot tier comfortably, and that is the tier the build uses.</p>
+
+  <h3>Proving a restore works</h3>
+  <p>An untested restore is a belief, not a capability. The full loop:</p>
+  <ol class="steps">
+    <li>Write a file on the server and let it sync up.</li>
+    <li>Take a backup, or wait for the scheduled one.</li>
+    <li>Delete the file.</li>
+    <li>Restore it to an alternate folder on the same share.</li>
+    <li><strong>Confirm it syncs back down to the server.</strong> This is the step people skip, and it is the one that proves the round trip.</li>
+  </ol>
+  <div class="note"><span class="lbl">It will look broken for up to a day</span>Changes written straight to the share are detected once every 24 hours. To see a restored file on the servers now, force detection with <code>Invoke-AzStorageSyncChangeDetection</code>.</div>
+  <div class="note warn"><span class="lbl">The command line cannot do this one</span><code>az backup restore restore-azurefileshare</code> has no source-file option - the CLI can only restore a whole share. Item-level restore needs <code>Restore-AzRecoveryServicesBackupItem</code> in PowerShell.</div>
+</section>
+
+<!-- =========================================================== ASSESS -->
+<section class="tab" id="tab-assess">
+  <h2>Assess an existing estate</h2>
+  <p class="lead">Read-only from end to end. No keys, no shared access signatures, no certificates, no file data.</p>
+
+  <h3>Three steps</h3>
+  <table>
+    <tr><th>Step</th><th>Runs where</th><th>Needs</th><th>Produces</th></tr>
+    <tr><td>Export the cloud side</td><td>Any workstation</td><td>Reader</td><td><code>afs-export-&lt;stamp&gt;.zip</code></td></tr>
+    <tr><td>Export a server (optional)</td><td>On each file server, elevated</td><td>Local admin</td><td><code>&lt;host&gt;-afs-server-&lt;stamp&gt;.zip</code></td></tr>
+    <tr><td>Assess</td><td>Anywhere - no Azure access</td><td>The zip</td><td>Report plus findings</td></tr>
+  </table>
+
+  <pre><code>.\Export-AzFileSyncEnvironment.ps1
+.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-&lt;stamp&gt;.zip -CustomerName "Contoso"</code></pre>
+
+  <h3>What comes out</h3>
+  <div class="cards">
+    <div class="card"><h5>assessment.md</h5><p>Scorecard, findings by severity with evidence and a Microsoft reference each, and a prioritised roadmap.</p></div>
+    <div class="card"><h5>findings.json</h5><p>The same data for a deck or a tracker.</p></div>
+    <div class="card"><h5>assessment.html</h5><p>One self-contained page, a tab per section, filterable by severity and area.</p></div>
+  </div>
+
+  <h3>If the customer needs a private path</h3>
+  <pre><code>.\Assess-AzFileSyncExport.ps1 -ExportPath ... -PrivateTrafficRequired</code></pre>
+  <p>Turns on the target-state networking rules and escalates the public-path findings.</p>
+  <div class="note"><span class="lbl">One thing it will tell you that surprises people</span>Azure Files <em>backup</em> traffic is internal to Azure. A vault private endpoint does not apply to it, so there is nothing to route over a private circuit for backup - only for SMB and for sync.</div>
+</section>
+
+<!-- =========================================================== GOVERN -->
+<section class="tab" id="tab-govern">
+  <h2>Policy and governance</h2>
+  <p class="lead">A different question, with a mature answer already written. This wraps it rather than reinventing it.</p>
+
+  <p>The assessor judges <em>this estate</em>. It says nothing about the tenant around it - policy assignments, who can do what, management group shape, locks, Defender coverage. Option 4 runs the Azure Governance Visualizer against the subscription and tenant from your deployment, and puts its report next to the others.</p>
+
+  <pre><code>.\Invoke-AfsGovernanceAssessment.ps1 -Context .\deploy\deployment-context.json</code></pre>
+
+  <h3>Two things it handles for you</h3>
+  <ul>
+    <li><strong>PowerShell 7.</strong> The kit runs on 5.1 deliberately, because the AD DS join needs it. So this shells out to 7 - and looks for it in three places: what you pass, a portable copy in <code>.pwsh7</code>, then the path. No local administrator needed: the same release ships as a plain zip.</li>
+    <li><strong>Reader at the management group.</strong> Without it the run finishes and reports almost nothing, which reads like a broken tool rather than a missing role. It checks first, and prints the grant.</li>
+  </ul>
+
+  <div class="note"><span class="lbl">Kept separate on purpose</span>The two reports are not merged. They answer different questions and have different owners; blurring them makes it unclear who has to act on what.</div>
+</section>
+
+<!-- ========================================================= TEARDOWN -->
+<section class="tab" id="tab-teardown">
+  <h2>Teardown</h2>
+  <p class="lead">The order is not a preference. Each step is refused while the one below it still exists.</p>
+
+  <figure class="fig">
+    <svg viewBox="0 0 860 250" role="img" aria-label="The order a teardown must follow">
+      <defs><marker id="ah4" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--accent)"/></marker></defs>
+      <rect class="a" x="14" y="46" width="150" height="62" rx="6"/><text class="t" x="89" y="70" text-anchor="middle">1 &middot; sync</text><text class="s" x="89" y="88" text-anchor="middle">endpoints, groups,</text><text class="s" x="89" y="102" text-anchor="middle">unregister</text>
+      <rect class="a" x="196" y="46" width="150" height="62" rx="6"/><text class="t" x="271" y="70" text-anchor="middle">2 &middot; AD DS join</text><text class="s" x="271" y="88" text-anchor="middle">capture, disable,</text><text class="s" x="271" y="102" text-anchor="middle">then delete</text>
+      <rect class="a" x="378" y="46" width="150" height="62" rx="6"/><text class="t" x="453" y="70" text-anchor="middle">3 &middot; Azure</text><text class="s" x="453" y="88" text-anchor="middle">protection, vault,</text><text class="s" x="453" y="102" text-anchor="middle">resource group</text>
+      <rect class="a" x="560" y="46" width="150" height="62" rx="6"/><text class="t" x="635" y="70" text-anchor="middle">4 &middot; identity</text><text class="s" x="635" y="88" text-anchor="middle">the Entra app</text>
+      <path class="l" d="M164 77 L 192 77" marker-end="url(#ah4)"/>
+      <path class="l" d="M346 77 L 374 77" marker-end="url(#ah4)"/>
+      <path class="l" d="M528 77 L 556 77" marker-end="url(#ah4)"/>
+      <rect class="n" x="14" y="150" width="696" height="72" rx="6"/>
+      <text class="t" x="30" y="174">Two of these do not live in the resource group</text>
+      <text class="s" x="30" y="194">Deleting the group leaves the Entra identity and the storage account's directory object behind.</text>
+      <text class="s" x="30" y="211">The as-built names both, with the command for each.</text>
+    </svg>
+    <figcaption>A cloud endpoint cannot be removed while a server endpoint uses it, and the sync group cannot go while either exists.</figcaption>
+  </figure>
+
+  <h3>Two things that will surprise you</h3>
+  <div class="note warn"><span class="lbl">The vault will not delete for 14 days</span>Soft delete keeps the removed backup data, and a vault holding it cannot be deleted - where a policy sets it to always-on, that cannot be turned off. The teardown detects this, removes every other resource individually instead, and prints the date to come back.</div>
+  <div class="note warn"><span class="lbl">Share snapshots accumulate</span>Azure File Sync takes a share snapshot when a cloud endpoint is created, and never removes it. Repeated build-and-teardown cycles pile them up. List them with <code>az storage share list --include-snapshots</code>.</div>
+
+  <h3>Cloud tiering changes the risk</h3>
+  <p>A tiered file on disk is a pointer to the cloud copy. Removing a server endpoint while files are still tiered leaves those pointers with nothing behind them. The teardown recalls everything first, and refuses to continue if the recall did not finish.</p>
+</section>
+
+<!-- ========================================================= TROUBLE -->
+<section class="tab" id="tab-trouble">
+  <h2>When it goes wrong</h2>
+  <p class="lead">Every message here came from an actual run, not from a specification.</p>
+
+  <table>
+    <tr><th>What you see</th><th>What it means</th><th>What to do</th></tr>
+    <tr><td><code>RequestDisallowedByAzure ... without authenticating through MFA</code></td><td>The session signed in without multi-factor. Reads work, writes do not.</td><td><code>az logout</code>, then <code>az login</code> and complete the prompt. More roles will not help.</td></tr>
+    <tr><td><code>AuthorizationFailed</code> creating a cloud endpoint</td><td>Contributor cannot create role assignments, and a cloud endpoint creates one.</td><td>Sign in as Owner, User Access Administrator, or Azure File Sync Administrator on the storage account.</td></tr>
+    <tr><td><code>-o was unexpected at this time.</code></td><td>On Windows <code>az</code> is a batch file, and a closing bracket inside an argument ends one of its blocks early. Any query with a function call trips it.</td><td>Query plainly and filter afterwards. The kit calls the bundled Python directly to sidestep it.</td></tr>
+    <tr><td><code>MissingSubscriptionRegistration</code></td><td>The subscription has never used that service.</td><td>Preflight registers the five providers the build needs. By hand: <code>az provider register -n &lt;namespace&gt;</code>.</td></tr>
+    <tr><td>The endpoint exists but the name still resolves publicly</td><td>The DNS zone group check passed on an empty answer, so no address records were written.</td><td>Re-run the build; verify with <code>az network private-dns record-set a list</code>.</td></tr>
+    <tr><td><code>ScopeLocked</code> deleting the storage account</td><td>A lock lives on the resource, not the group. Deleting it by name at group scope reports success and removes nothing.</td><td>Delete locks by id, and verify afterwards rather than trusting the message.</td></tr>
+    <tr><td><code>InUseSubnetCannotBeDeleted</code></td><td>Children before parents: the network is held by an interface, which is held by its private endpoint.</td><td>The teardown now orders deletes and loops until a pass removes nothing.</td></tr>
+    <tr><td>"This cmdlet requires an elevated PowerShell session"</td><td>Almost always means RSAT Active Directory is missing, not that elevation is the real problem.</td><td><code>Install-WindowsFeature RSAT-AD-PowerShell</code>, elevated, once.</td></tr>
+    <tr><td>A run hangs with no output at all</td><td>Something is waiting on a prompt that no console can answer.</td><td>Run it from a real console, or pass <code>-Confirm:$false</code> via <code>-Command</code>. Note that <code>-File</code> silently drops it.</td></tr>
+    <tr><td><code>msiexec exit 3010</code></td><td>Success. Windows wants a restart to finish releasing the filter driver.</td><td>Nothing urgent. Restart when convenient.</td></tr>
+    <tr><td>Sync health is blank just after a build</td><td>Azure's telemetry lags roughly fifteen minutes.</td><td>Read the server first - it knows before Azure does. Or just check whether the files arrived.</td></tr>
+    <tr><td><code>usage error: --resource ID | --resource NAME</code></td><td>Git Bash rewrote a resource id into a path. Every id starts with a slash.</td><td>Run from PowerShell, or set <code>MSYS_NO_PATHCONV=1</code>.</td></tr>
+  </table>
+
+  <h3>Reading the logs</h3>
+  <p>Every run writes three files into <code>logs/</code>: a readable log, the same events as JSON for tooling, and a console transcript that captures crashes outside the script's own error handling. After a failure, look for the <code>[ERROR]</code> line - it carries the message, the line that threw, and the stack.</p>
+  <table>
+    <tr><th>Level</th><th>Shows on screen</th></tr>
+    <tr><td>Quiet</td><td>Warnings and errors only.</td></tr>
+    <tr><td>Normal</td><td>What the scripts print.</td></tr>
+    <tr><td>Verbose</td><td>Plus every command the kit runs, its result and its timing.</td></tr>
+    <tr><td>Debug</td><td>Plus the Azure CLI's own output - hundreds of lines per call.</td></tr>
+  </table>
+  <p>The file always receives everything; the level only decides what reaches the screen. Each step is timed, and a run ends with a total and the three steps that cost the most. <code>AFS_STEP_PAUSE=2</code> slows a run down for a demo.</p>
+</section>
+
+<!-- ======================================================== REFERENCE -->
+<section class="tab" id="tab-reference">
+  <h2>Reference</h2>
+
+  <h3>What is where</h3>
+  <table>
+    <tr><th>Path</th><th>What it holds</th></tr>
+    <tr><td><code>start.ps1</code></td><td>The front door. Everything is reachable from here.</td></tr>
+    <tr><td><code>deploy/</code></td><td>The inputs, the two phases, the teardown, the as-built generator.</td></tr>
+    <tr><td><code>onprem/</code></td><td>The three steps that touch your machines.</td></tr>
+    <tr><td><code>codex/</code></td><td>Blueprints, playbooks and runbooks, plus the diagrams.</td></tr>
+    <tr><td><code>advise/</code></td><td>The decision-led path for a customer who will not be assessed.</td></tr>
+    <tr><td><code>docs/</code></td><td>The written guides, the rule catalogue and the validation record.</td></tr>
+    <tr><td><code>as-built/</code>, <code>logs/</code>, <code>governance/</code></td><td>Generated. Not committed - they name real resources.</td></tr>
+  </table>
+
+  <h3>Dependencies</h3>
+  <table>
+    <tr><th>For</th><th>You need</th></tr>
+    <tr><td>Assessing</td><td><code>Az.Accounts</code>, and Reader on the subscriptions.</td></tr>
+    <tr><td>Building</td><td>Azure CLI, the <code>dns-resolver</code> extension, and Contributor on the subscription.</td></tr>
+    <tr><td>Connecting servers</td><td><code>Az.Storage</code>, <code>Az.StorageSync</code>, remoting to the file server, and RSAT Active Directory for the join.</td></tr>
+    <tr><td>Governance</td><td>PowerShell 7, and Reader at the management group.</td></tr>
+  </table>
+  <p>Option 6 checks all of it and tells you the exact command for anything missing.</p>
+
+  <h3>Things that cannot be undone</h3>
+  <ul>
+    <li>Storage and vault redundancy, and cross-region restore.</li>
+    <li>The Enhanced backup policy for a Trusted Launch machine.</li>
+    <li>A resource group name - Azure has no rename.</li>
+    <li>A server endpoint path.</li>
+    <li>Vault soft delete, where a policy sets it to always-on.</li>
+  </ul>
+
+  <div class="note good"><span class="lbl">If you remember one thing</span>Run the dry run. Every build, teardown and on-premises step offers one, it changes nothing, and it has caught real defects in this kit more than once.</div>
+</section>
+
+</main>
+<footer>Luca Az-Deploy plus &middot; open this file from anywhere - it needs no network</footer>
+<script>
+(function(){
+  function show(id){
+    document.querySelectorAll('nav.tabs button').forEach(function(b){b.classList.toggle('active',b.dataset.tab===id);});
+    document.querySelectorAll('section.tab').forEach(function(s){s.classList.toggle('active',s.id==='tab-'+id);});
+    if(history.replaceState){history.replaceState(null,'','#'+id);}
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  document.querySelectorAll('nav.tabs button').forEach(function(b){b.addEventListener('click',function(){show(b.dataset.tab);});});
+  var h=(location.hash||'').replace('#','');
+  if(h&&document.getElementById('tab-'+h)){show(h);}
+})();
+</script>
+</body>
+</html>

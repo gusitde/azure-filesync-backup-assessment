@@ -68,6 +68,11 @@ function Get-AfsSettingCatalog {
            Why = 'A computer account is the default; its password does not expire on the OU policy.'; Pattern = '^(ComputerAccount|ServiceLogonAccount)$'; Help = 'ComputerAccount or ServiceLogonAccount' }
         @{ Group = 'Directory'; Path = 'activeDirectoryAdmin.userPrincipalName'; Label = 'AD admin account'
            Why = 'Needs only the right to create an object in that OU - not Domain Admin.' }
+
+        @{ Group = 'On-premises'; Path = 'onPremises.fileServer'; Label = 'File server'
+           Why = 'The server to register with the sync service. A name PowerShell remoting can reach.'; Pattern = '^[A-Za-z0-9._-]+$'; Help = 'a computer name, for example fs01.corp.contoso.com' }
+        @{ Group = 'On-premises'; Path = 'onPremises.dnsServers'; Label = 'DNS servers'
+           Why = 'Every resolver your clients use. Active Directory replicates a conditional forwarder to domain controllers running DNS and nowhere else, so member servers and appliances belong here too.'; Pattern = '^[A-Za-z0-9._,\s-]+$'; Help = 'one or more computer names separated by commas' }
     )
 }
 
@@ -116,6 +121,26 @@ function Get-AfsEffectiveValue {
         if ($null -ne $d) { return [pscustomobject]@{ Value = $d; Source = 'derived' } }
     }
     return [pscustomobject]@{ Value = $null; Source = 'not set' }
+}
+
+function Save-AfsOnPremisesAnswers {
+    <# Remember what was just answered, so the next run offers it instead of asking cold.
+       Best effort by design: this is a convenience, and failing to record it must never stop
+       the work that was actually asked for. #>
+    param([string]$FileServer, [hashtable]$ServerPaths, [string]$DnsServers, [string]$InputsPath)
+    if (-not $InputsPath) { $InputsPath = Join-Path $PSScriptRoot 'inputs.json' }
+    if (-not (Test-Path $InputsPath)) { return }
+    try {
+        $inputs = Read-AfsJsonc -Path $InputsPath
+        if ($FileServer) { Set-AfsInputValue -Inputs $inputs -Path 'onPremises.fileServer' -Value $FileServer }
+        if ($DnsServers) { Set-AfsInputValue -Inputs $inputs -Path 'onPremises.dnsServers' -Value $DnsServers }
+        if ($ServerPaths -and $ServerPaths.Count) {
+            foreach ($k in $ServerPaths.Keys) {
+                Set-AfsInputValue -Inputs $inputs -Path ('onPremises.serverPaths.' + $k) -Value $ServerPaths[$k]
+            }
+        }
+        Save-AfsInputs -Inputs $inputs -Path $InputsPath
+    } catch { }
 }
 
 function Save-AfsInputs {
