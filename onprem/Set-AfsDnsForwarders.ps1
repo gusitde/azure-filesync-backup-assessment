@@ -103,6 +103,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'AfsOnPrem.ps1')
 if (-not $env:AFS_LOG_FILE) { Start-AfsLog -Level Verbose -Name 'dnsforwarders' | Out-Null }
 Write-Host ('  log: ' + $env:AFS_LOG_FILE) -ForegroundColor DarkGray
+Confirm-AfsCanPrompt -BoundParameters $PSBoundParameters -ScriptName 'onprem\Set-AfsDnsForwarders.ps1'
 
 $ctx = Read-AfsContext -Path $Context
 $cfg = $ctx.config

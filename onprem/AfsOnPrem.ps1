@@ -298,6 +298,42 @@ Sign in once:
     return $ctx
 }
 
+function Confirm-AfsCanPrompt {
+    <#  A high-impact script asks PowerShell's own "Are you sure?" before each change. That is
+        right at a console and impossible anywhere else - and the way it fails is horrible:
+        ShouldProcess cannot reach a host to prompt, and throws
+
+            Exception calling "ShouldProcess" with "2" argument(s):
+            "Object reference not set to an instance of an object."
+
+        which tells the operator nothing at all.
+
+        Worse, the obvious escape does not work. `powershell -File script.ps1 -Confirm:$false`
+        SILENTLY DROPS the parameter - it never binds, $ConfirmPreference stays High, and the
+        script fails exactly as if it had not been passed. (-File binds arguments as strings,
+        and the colon form of a switch does not survive that.)
+
+        So detect it here, once, and say what to do instead.  #>
+    param([Parameter(Mandatory)][hashtable]$BoundParameters, [string]$ScriptName)
+    if ($BoundParameters.ContainsKey('Confirm') -or $BoundParameters.ContainsKey('WhatIf')) { return }
+    if ($ConfirmPreference -eq 'None') { return }
+    if (-not [Console]::IsOutputRedirected -and -not [Console]::IsInputRedirected) { return }
+
+    Write-AfsWarn 'this session cannot show a confirmation prompt, and this script asks for one before every change'
+    Write-AfsSay @"
+Run it from a PowerShell console, or - to run it unattended - suppress the prompt
+in a way that actually binds:
+
+  powershell -Command "& '.\$ScriptName' -Context <context> ... -Confirm:`$false"
+
+-File does NOT work for this: `powershell -File $ScriptName -Confirm:`$false` drops
+the parameter silently and the script still tries to prompt.
+
+start.ps1 already calls these scripts correctly.
+"@
+    throw 'No console is available to confirm against. See the note above.'
+}
+
 function Test-AfsAzureWriteScope {
     <# Answer one question before a step that needs more than Contributor: does the CURRENT
        session hold a role that can create role assignments at this scope? Creating a File

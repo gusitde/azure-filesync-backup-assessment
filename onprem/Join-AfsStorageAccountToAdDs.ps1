@@ -50,6 +50,16 @@
   Create the OU if it does not exist. Off by default: where the object lives is usually
   someone else's decision.
 
+.PARAMETER AdCredential
+  An account with rights in Active Directory, used for the OU steps. Prompted for against the
+  account named in your inputs when it is needed and not supplied; AFS_AD_USER / AFS_AD_PASS
+  are read first when both are set.
+
+  Note what this does NOT cover. Join-AzStorageAccount has no credential parameter at all - it
+  creates the computer object as WHOEVER IS RUNNING THE SCRIPT. So this credential can create
+  the OU for you, but the join itself still needs the running account to hold create-computer
+  rights in that OU. The script says so, with the delegation command, if it does not.
+
 .PARAMETER GrantShareAccess
   One or more users or groups to grant share-level access to, as UPNs or object ids. Without
   this, a joined share still lets nobody in - the default share permission is None.
@@ -74,6 +84,7 @@ param(
     [string]$SamAccountName,
     [ValidateSet('ComputerAccount', 'ServiceLogonAccount')][string]$DomainAccountType,
     [switch]$CreateOrganizationalUnit,
+    [System.Management.Automation.PSCredential]$AdCredential,
     [string[]]$GrantShareAccess,
     [ValidateSet('Storage File Data SMB Share Reader', 'Storage File Data SMB Share Contributor', 'Storage File Data SMB Share Elevated Contributor')]
     [string]$ShareRole = 'Storage File Data SMB Share Contributor',
@@ -86,6 +97,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'AfsOnPrem.ps1')
 if (-not $env:AFS_LOG_FILE) { Start-AfsLog -Level Verbose -Name 'addsjoin' | Out-Null }
 Write-Host ('  log: ' + $env:AFS_LOG_FILE) -ForegroundColor DarkGray
+Confirm-AfsCanPrompt -BoundParameters $PSBoundParameters -ScriptName 'onprem\Join-AfsStorageAccountToAdDs.ps1'
 
 $ctx = Read-AfsContext -Path $Context
 $cfg = $ctx.config
@@ -216,6 +228,36 @@ if ($Remove) {
     return
 }
 
+# =================================================================== module ====
+
+Write-AfsStep 'AzFilesHybrid module'
+Write-AfsSay 'Imported before anything else, because the check for an existing join uses one of its cmdlets.'
+
+$modDir = Join-Path ([IO.Path]::GetTempPath()) 'AzFilesHybrid'
+if ($true) {
+    if (-not (Test-Path (Join-Path $modDir 'AzFilesHybrid.psd1'))) {
+        if ($PSCmdlet.ShouldProcess($ModuleUrl, 'download the AzFilesHybrid module')) {
+            $zip = Join-Path ([IO.Path]::GetTempPath()) 'AzFilesHybrid.zip'
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $ModuleUrl -OutFile $zip -UseBasicParsing -TimeoutSec 300
+            if (Test-Path $modDir) { Remove-Item $modDir -Recurse -Force }
+            Expand-Archive -Path $zip -DestinationPath $modDir -Force
+            # files out of a downloaded zip carry the mark of the web and will not import
+            Get-ChildItem $modDir -Recurse | Unblock-File
+            Remove-Item $zip -Force -ErrorAction SilentlyContinue
+            Write-AfsOk ('downloaded and extracted to ' + $modDir)
+        }
+    } else {
+        Write-AfsOk ('already extracted at ' + $modDir)
+    }
+    # Imported from the extracted folder rather than installed with CopyToPSPath.ps1: nothing
+    # is written into the profile, and the version is exactly what was just downloaded.
+    if (Test-Path (Join-Path $modDir 'AzFilesHybrid.psd1')) {
+        Import-Module (Join-Path $modDir 'AzFilesHybrid.psd1') -Force -Verbose:$false -ErrorAction Stop
+        Write-AfsOk ('AzFilesHybrid ' + (Get-Module AzFilesHybrid).Version + ' imported')
+    }
+}
+
 # =============================================================== already done ==
 
 Write-AfsStep 'Is it already joined?'
@@ -243,36 +285,8 @@ if ($current -eq 'AD') {
     } else {
         Write-AfsWarn 'joined, but the AD object password does not match either Kerberos key - the join will be repaired'
     }
-}
-if (-not $joined) { Write-AfsInfo 'not joined yet' }
-
-# =================================================================== module ====
-
-Write-AfsStep 'AzFilesHybrid module'
-
-$modDir = Join-Path ([IO.Path]::GetTempPath()) 'AzFilesHybrid'
-if (-not $joined) {
-    if (-not (Test-Path (Join-Path $modDir 'AzFilesHybrid.psd1'))) {
-        if ($PSCmdlet.ShouldProcess($ModuleUrl, 'download the AzFilesHybrid module')) {
-            $zip = Join-Path ([IO.Path]::GetTempPath()) 'AzFilesHybrid.zip'
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $ModuleUrl -OutFile $zip -UseBasicParsing -TimeoutSec 300
-            if (Test-Path $modDir) { Remove-Item $modDir -Recurse -Force }
-            Expand-Archive -Path $zip -DestinationPath $modDir -Force
-            # files out of a downloaded zip carry the mark of the web and will not import
-            Get-ChildItem $modDir -Recurse | Unblock-File
-            Remove-Item $zip -Force -ErrorAction SilentlyContinue
-            Write-AfsOk ('downloaded and extracted to ' + $modDir)
-        }
-    } else {
-        Write-AfsOk ('already extracted at ' + $modDir)
-    }
-    # Imported from the extracted folder rather than installed with CopyToPSPath.ps1: nothing
-    # is written into the profile, and the version is exactly what was just downloaded.
-    if (Test-Path (Join-Path $modDir 'AzFilesHybrid.psd1')) {
-        Import-Module (Join-Path $modDir 'AzFilesHybrid.psd1') -Force -Verbose:$false -ErrorAction Stop
-        Write-AfsOk ('AzFilesHybrid ' + (Get-Module AzFilesHybrid).Version + ' imported')
-    }
+} else {
+    Write-AfsInfo 'not joined yet'
 }
 
 # ======================================================================= OU ====
@@ -290,15 +304,33 @@ name, for example:
     throw 'An organizational unit is required. See above.'
 }
 
+$adArgs = @{}
+if ($AdCredential) { $adArgs.Credential = $AdCredential }
+
 $ouExists = $false
-try { $ouExists = [bool](Get-ADObject -Identity $OrganizationalUnit -ErrorAction Stop) } catch { }
+try { $ouExists = [bool](Get-ADObject -Identity $OrganizationalUnit @adArgs -ErrorAction Stop) } catch { }
 if ($ouExists) {
     Write-AfsOk ($OrganizationalUnit + ' exists')
 } elseif ($CreateOrganizationalUnit) {
     $name = ($OrganizationalUnit -split ',')[0] -replace '^OU=', ''
     $parent = ($OrganizationalUnit -split ',', 2)[1]
+    if (-not $AdCredential) {
+        # Creating an OU is a directory change, and the account running this is usually not the
+        # one allowed to make it. Ask before failing with a bare "Access is denied".
+        $adUpn = [string](Get-AfsProperty $cfg 'adAdminUpn' '')
+        Write-AfsInfo ('creating an organizational unit needs an account with rights in ' + $cs.Domain)
+        $AdCredential = Get-AfsCredential -UserName $adUpn -Message ('An account that may create an OU in ' + $cs.Domain) -UserEnvName 'AFS_AD_USER' -PasswordEnvName 'AFS_AD_PASS'
+        $adArgs = @{ Credential = $AdCredential }
+    }
     if ($PSCmdlet.ShouldProcess($OrganizationalUnit, 'create the organizational unit')) {
-        New-ADOrganizationalUnit -Name $name -Path $parent -ProtectedFromAccidentalDeletion $true -ErrorAction Stop
+        try {
+            New-ADOrganizationalUnit -Name $name -Path $parent -ProtectedFromAccidentalDeletion $true @adArgs -ErrorAction Stop
+        } catch {
+            Write-AfsWarn ('could not create ' + $OrganizationalUnit + ': ' + $_.Exception.Message)
+            Write-AfsSay ("The account used (" + $(if ($AdCredential) { $AdCredential.UserName } else { $env:USERNAME }) + ") may not create an organizational unit there.
+Ask a directory administrator to create it, or pass -AdCredential with an account that can.")
+            throw
+        }
         Write-AfsOk ('created ' + $OrganizationalUnit)
     }
 } else {
@@ -342,7 +374,36 @@ shared key access for the join and turn it off again afterwards:
         if ($domain) { $p.Domain = $domain }
         # No -EncryptionType: it was removed in AzFilesHybrid v0.2.9 and AES-256 is now
         # unconditional. Passing it to a current module is a parameter binding error.
-        Join-AzStorageAccount @p
+        try {
+            Join-AzStorageAccount @p
+        } catch {
+            $msg = $_.Exception.Message
+            # the module rewrites the AD error into its own wording, and the same wording is
+            # also what it emits for a SamAccountName that is too long - so both are named
+            if ($msg -match 'Access is denied|privilege is not held|Insufficient access|Unable to create AD object|permission to create an identity') {
+                Write-AfsWarn 'Active Directory refused to create the account'
+                Write-AfsSay @"
+Join-AzStorageAccount has no credential parameter - it creates the computer
+object as whoever is running this script, which right now is $env:USERDOMAIN\$env:USERNAME.
+That account needs the right to create a computer object in
+
+  $OrganizationalUnit
+
+Either run this script as an account that has it, or have a directory
+administrator delegate it - which is what Microsoft's least-privilege guidance
+describes:
+
+  dsacls "$OrganizationalUnit" /I:T /G "$env:USERDOMAIN\$env:USERNAME:CC;computer"
+
+If the permissions really are in place, check the account name length instead:
+the module reports a SamAccountName that is too long with this same message.
+Yours is '$SamAccountName' ($($SamAccountName.Length) characters, limit 15).
+
+Nothing was changed in Azure; re-run when that is in place.
+"@
+            }
+            throw
+        }
         Write-AfsOk ('joined as ' + $SamAccountName)
     }
 }

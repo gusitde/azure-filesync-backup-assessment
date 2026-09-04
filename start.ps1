@@ -215,6 +215,47 @@ az dns-resolver command fails as an unrecognised command group."
         }
     }
 
+    # What the on-premises steps need. None of this is required to build the Azure side, so a
+    # gap is reported rather than fatal - but it is reported HERE, where it costs nothing to
+    # fix, instead of halfway through a change to a domain controller.
+    Write-Host ''
+    Write-Host '  For the on-premises steps (option 7):' -ForegroundColor DarkGray
+
+    foreach ($m in @('Az.Accounts', 'Az.Storage', 'Az.StorageSync')) {
+        if (Get-Module -ListAvailable -Name $m) {
+            Write-Good ($m + ' ' + ((Get-Module -ListAvailable -Name $m | Sort-Object Version -Descending | Select-Object -First 1).Version))
+        } else {
+            Write-Note ($m + ' is not installed - needed to register a file server and create the endpoints.')
+            Write-Explain ("  Install-Module " + $m + " -Scope CurrentUser")
+        }
+    }
+
+    if (Get-Module -ListAvailable -Name ActiveDirectory) {
+        Write-Good 'Active Directory module (RSAT) - the AD DS join can run'
+    } else {
+        Write-Note 'the Active Directory module (RSAT) is not installed - the AD DS join cannot run.'
+        Write-Explain @"
+AzFilesHybrid needs it, and it tries to install it for you from a block that runs
+even under -WhatIf - an install that needs elevation, and whose error message
+("requires an elevated PowerShell session") points at the wrong problem.
+
+Install it once, from an ELEVATED PowerShell:
+  Install-WindowsFeature RSAT-AD-PowerShell                                   # Windows Server
+  Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0   # Windows client
+
+After that the join runs without elevation.
+"@
+    }
+
+    if (Get-Module -ListAvailable -Name DnsServer) {
+        Write-Good 'DnsServer module - conditional forwarders can be set from here'
+    } else {
+        Write-Note 'the DnsServer module is not installed.'
+        Write-Explain "Not fatal: the forwarder script falls back to running the cmdlets inside a
+remoting session on each DNS server. Installing it locally gives clearer
+errors:  Install-WindowsFeature RSAT-DNS-Server   (elevated)"
+    }
+
     return $ok
 }
 
