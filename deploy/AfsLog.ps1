@@ -336,8 +336,8 @@ $script:AfsStepTimes = New-Object System.Collections.ArrayList
 #  THIS IS THE ONE PLACE THE VERSION LIVES. The banner, the run logs, the as-built and any
 #  shipped zip read it from here. Bump it with every change and record the change in
 #  docs/VERSION-CONTROL.md - same scheme as the sibling Server-Ops product, deliberately.
-$script:AfsProductName    = 'Luca Az-Deploy plus'
-$script:AfsProductVersion = 'V 2026.09.04.005'
+$script:AfsProductName    = 'Luca AZ Consulting Helper'
+$script:AfsProductVersion = 'V 2026.09.04.006'
 $script:AfsProductAuthor  = 'Gustavo Assuncao'
 
 function Get-AfsProductInfo {

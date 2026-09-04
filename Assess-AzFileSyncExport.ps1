@@ -558,7 +558,9 @@ try {
     $rulesMd = Join-Path $OutputPath 'rules.md'
     [System.IO.File]::WriteAllText($rulesMd, (Get-Catalog), (New-Object System.Text.UTF8Encoding($false)))
   }
-  $null = ConvertTo-AfsAssessmentHtml -FindingsPath $jsonPath -OutputPath $htmlPath -SummaryPath $summaryMd -RulesPath $rulesMd
+  # $root is the resolved export (or the folder a zip was expanded into) - it is still on disk
+  # at this point, so the subject tabs can render the estate itself, not just the findings.
+  $null = ConvertTo-AfsAssessmentHtml -FindingsPath $jsonPath -OutputPath $htmlPath -SummaryPath $summaryMd -RulesPath $rulesMd -ExportRoot $root
   Write-Host ("Report: {0}" -f $htmlPath)
 } catch {
   Write-Warning ("assessment.html was not produced: " + $_.Exception.Message)

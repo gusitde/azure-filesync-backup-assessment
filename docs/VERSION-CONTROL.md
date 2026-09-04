@@ -1,4 +1,4 @@
-# Luca Az-Deploy plus - Version Control
+# Luca AZ Consulting Helper - Version Control
 
 **By Gustavo Assuncao**
 
@@ -52,6 +52,8 @@ only for someone with the repository in front of them.
 
 | Version | Date | Type | Component | Description | Author |
 |---|---|---|---|---|---|
+| V 2026.09.04.006 | 2026-09-04 | feat | Wizard | Renamed to **Luca AZ Consulting Helper** (owner, 2026-09-04). One line in `deploy\AfsLog.ps1`, which is the point of keeping the stamp in a single place; the banner, run logs and documents all followed. The 2026-09-03 ledger row keeps the old name because it records what was actually done that day. | Gustavo Assuncao |
+| - | 2026-09-04 | feat | Wizard | Deployment settings now names the settings file on screen every time, and offers "Edit the JSON file directly" - open it, open its folder, open the annotated sample, or check that it still parses. The parse check is the useful one: a hand-edited file that does not parse otherwise fails halfway through a build. Verified against a trailing comma and an unescaped Windows backslash (the two usual causes) and against a half-filled file, which correctly reports parses-but-does-not-resolve-yet. | Gustavo Assuncao |
 | V 2026.09.04.005 | 2026-09-04 | feat | Wizard | "See the assessment results" - a menu option that finds every assessment.html, names each by the customer read out of the report, and opens the whole report or any single tab by fragment. It also prints the severity counts and the top High findings in the terminal, for when a browser is not what you want. The tab list is read from the report rather than hard-coded, so a report made before a tab existed still opens and adding a tab needs no wizard change. | Gustavo Assuncao |
 | - | 2026-09-04 | test | Wizard | Two checks that would have caught today's defects: the report's tabs must come back individually (a `return ,$x` whose caller also wraps in @() gives Count=1 and silently flattens every field - that shipped once already today), and every menu option must have exactly one switch branch with indices 0..n-1. The menu has been renumbered twice today and one of its entries is "Remove an environment". Both verified against deliberately broken input. | Gustavo Assuncao |
 | V 2026.09.04.004 | 2026-09-04 | fix | Governance | Report what THIS run produced, not what is in the folder. The collect step listed every file in `governance/` as `[ok]`, so a what-if presented a previous assessment as its own output - and, far worse, a real run that produced nothing did the same, making a failed assessment look successful against stale data. It now stamps the start of the run and classifies by write time: fresh files are output, older ones are named as leftovers with their date and an explicit warning not to read them as current. | Gustavo Assuncao |

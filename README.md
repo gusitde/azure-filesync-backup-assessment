@@ -6,7 +6,7 @@ enhancements, and **design and build** it from nothing when there is nothing to 
 including the case where the servers are still on VMware and the customer wants sync and
 backup traffic on their ExpressRoute.
 
-**New here?** Run **`.\start.ps1`** - *Luca Az-Deploy plus*, the guided front door: it checks
+**New here?** Run **`.\start.ps1`** - *Luca AZ Consulting Helper*, the guided front door: it checks
 your prerequisites, asks what you want to do, and runs the right scripts in the right order.
 Its first option, **How to use it**, opens
 [docs/HOW-TO-USE.html](docs/HOW-TO-USE.html) - the long-form guide, with a tab per task,

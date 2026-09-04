@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-  Luca Az-Deploy plus - the guided front door. Asks what you want to do, checks your
+  Luca AZ Consulting Helper - the guided front door. Asks what you want to do, checks your
   prerequisites, asks the questions it needs, and runs the right scripts in the right order.
 
 .DESCRIPTION
@@ -541,6 +541,75 @@ something first (sign in again, register a provider), do it now, then answer yes
     return $false
 }
 
+function Invoke-SettingsFileFlow {
+    <# For the people who would rather edit JSON than answer questions. Both routes write the
+       same file, so neither is second-class - but the file is the one you can diff, comment
+       and keep in a ticket, which is why it is worth pointing at plainly. #>
+    $sample = Join-Path $script:DeployDir 'inputs.sample.jsonc'
+    while ($true) {
+        Write-Host ''
+        Write-Host '  The settings file' -ForegroundColor White
+        Write-Host ('    ' + $script:InputsFile) -ForegroundColor DarkGray
+        if (Test-Path $script:InputsFile) {
+            $fi = Get-Item $script:InputsFile
+            Write-Host ('    ' + [math]::Round($fi.Length / 1KB, 1) + ' KB, last changed ' + $fi.LastWriteTime.ToString('yyyy-MM-dd HH:mm')) -ForegroundColor DarkGray
+        } else {
+            Write-Note 'it does not exist yet - the sample is the place to start.'
+        }
+        Write-Explain "Edit it in any editor and come back; this screen re-reads the file every
+time it is shown, so your change appears as soon as you return. Comments
+(// and /* */) are allowed - it is read as JSONC, not strict JSON.
+
+The sample beside it carries a commented explanation of every field and,
+just as usefully, the shape each value is expected to take."
+
+        $labels = @(
+            'Open it in the default editor',
+            'Open the folder it is in',
+            'Open the annotated sample (inputs.sample.jsonc)',
+            'Check that it still parses',
+            'Back'
+        )
+        switch (Read-Choice -Question 'What would you like to do?' -Options $labels) {
+            0 {
+                if (-not (Test-Path $script:InputsFile)) { Write-Bad 'there is no file to open yet.'; break }
+                try { Start-Process $script:InputsFile; Write-Good ('opened ' + $script:InputsFile) }
+                catch { Write-Bad ('could not open it: ' + $_.Exception.Message); Write-Explain ('Open it by hand: ' + $script:InputsFile) }
+            }
+            1 {
+                try { Start-Process $script:DeployDir; Write-Good $script:DeployDir }
+                catch { Write-Bad ('could not open the folder: ' + $_.Exception.Message) }
+            }
+            2 {
+                if (-not (Test-Path $sample)) { Write-Bad ('the sample is missing: ' + $sample); break }
+                try { Start-Process $sample; Write-Good ('opened ' + $sample) }
+                catch { Write-Bad ('could not open it: ' + $_.Exception.Message); Write-Explain ('Open it by hand: ' + $sample) }
+            }
+            3 {
+                # A hand-edited file that does not parse fails at the least convenient moment -
+                # usually halfway through a build. Two seconds here beats that.
+                if (-not (Test-Path $script:InputsFile)) { Write-Bad 'there is no file to check yet.'; break }
+                try {
+                    $probe = Read-AfsJsonc -Path $script:InputsFile
+                    Write-Good 'it parses.'
+                    try {
+                        $r = Resolve-AfsConfig -Inputs $probe
+                        Write-Good ('and it resolves - resource group ' + $r.resourceGroup + ' in ' + $r.location)
+                    } catch {
+                        Write-Note ('it parses, but does not resolve yet: ' + $_.Exception.Message)
+                        Write-Explain 'That is fine while it is half-filled; the build needs it to resolve.'
+                    }
+                } catch {
+                    Write-Bad ('it does not parse: ' + $_.Exception.Message)
+                    Write-Explain 'A trailing comma and an unescaped backslash are the two usual causes.
+In a Windows path write \\ - "D:\\Shares\\dept" - or use a forward slash.'
+                }
+            }
+            4 { return }
+        }
+    }
+}
+
 function Invoke-SettingsFlow {
     <# Everything the build derives is editable, but nothing says so unless you read the
        resolver. This lists each setting with the value actually in force - yours, or the one
@@ -565,6 +634,10 @@ can be copied from the sample."
         Write-Title 'Deployment settings'
         Write-Explain "Anything marked (derived) follows from the name prefix. Change the prefix and
 they move together; set one explicitly and it stops following."
+        # Some people would rather edit the file. Say where it is, every time, rather than
+        # making that a thing you have to already know.
+        Write-Host ''
+        Write-Host ('  settings file   ' + $script:InputsFile) -ForegroundColor DarkGray
         # These settings are read when phase 1 writes the deployment context. A build or
         # a resume that runs FROM an existing context uses what was captured then, so an
         # edit here would otherwise appear to do nothing at all.
@@ -590,14 +663,18 @@ deployment that was already started."
             }
         }
 
-        $opts = @($groups | ForEach-Object { 'Change something under ' + $_ }) + @('Show what it all resolves to', 'Back')
+        $opts = @($groups | ForEach-Object { 'Change something under ' + $_ }) +
+                @('Show what it all resolves to',
+                  'Edit the JSON file directly (deploy\inputs.json)',
+                  'Back')
         $choice = Read-Choice -Question 'What now?' -Options $opts
         if ($choice -eq $groups.Count) {
             if ($resolved) { Show-AfsConfig -Config $resolved }
             else { Write-Bad 'the settings do not resolve yet - fill in the ones shown as (not set).' }
             continue
         }
-        if ($choice -eq ($groups.Count + 1)) { return }
+        if ($choice -eq ($groups.Count + 1)) { Invoke-SettingsFileFlow; continue }
+        if ($choice -eq ($groups.Count + 2)) { return }
 
         $group = $groups[$choice]
         $items = @($catalog | Where-Object { $_.Group -eq $group })

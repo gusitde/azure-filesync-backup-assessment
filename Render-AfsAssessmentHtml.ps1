@@ -83,12 +83,18 @@ function ConvertTo-AfsHtmlFromMarkdown {
     return $out.ToString()
 }
 
+# The subject tabs. Each entry names a function in this file that renders exactly one
+# <section class="tab">. They are additive: a report produced without an export root simply
+# omits them, and adding a subject means adding a function plus a row here - nothing else.
+$script:AfsDataTabs = @()
+
 function ConvertTo-AfsAssessmentHtml {
     param(
         [Parameter(Mandatory)][string]$FindingsPath,
         [string]$OutputPath,
         [string]$SummaryPath,
-        [string]$RulesPath
+        [string]$RulesPath,
+        [string]$ExportRoot
     )
     if (-not (Test-Path $FindingsPath)) { throw "findings file not found: $FindingsPath" }
     $dir = Split-Path -Parent (Resolve-Path $FindingsPath)
@@ -185,9 +191,20 @@ footer{color:var(--faint);font-size:12px;padding:24px 32px;text-align:center}
     # ---- header + tab bar ------------------------------------------------------
     [void]$sb.Append("<header><h1>Azure File Sync + Azure Backup assessment - $customer</h1>")
     [void]$sb.Append("<div class=`"meta`">Assessed <code>$assessed</code> - export <code>$export</code> - tool v$toolv</div>")
+# A subject tab is offered only when its renderer exists AND there is an export to read.
+    # Findings say what is wrong; these say what is actually there, which is the evidence.
+    $dataTabs = @()
+    if ($ExportRoot -and (Test-Path $ExportRoot)) {
+        foreach ($d in $script:AfsDataTabs) {
+            if (Get-Command $d.fn -ErrorAction SilentlyContinue) { $dataTabs += $d }
+        }
+    }
     $tabs = @(
         @{ id = 'overview'; t = 'Overview'; n = '' },
-        @{ id = 'findings'; t = 'Findings'; n = $findings.Count },
+        @{ id = 'findings'; t = 'Findings'; n = $findings.Count }
+    )
+    foreach ($d in $dataTabs) { $tabs += @{ id = $d.id; t = $d.t; n = '' } }
+    $tabs += @(
         @{ id = 'roadmap';  t = 'Roadmap';  n = '' },
         @{ id = 'scope';    t = 'Scope';    n = '' },
         @{ id = 'rules';    t = 'Rules';    n = '' },
@@ -244,6 +261,20 @@ footer{color:var(--faint);font-size:12px;padding:24px 32px;text-align:center}
             (HtmlEnc $f.severity), (HtmlEnc $f.area), (HtmlEnc $f.id), $sc, (HtmlEnc $f.resource), (HtmlEnc $f.title), (HtmlEnc $f.evidence), (HtmlEnc $f.recommendation), $ref))
     }
     [void]$sb.Append("</tbody></table></section>")
+
+    # ---- SUBJECT TABS ----------------------------------------------------------
+    # Each renderer owns one section and must not throw: a subject whose renderer fails still
+    # leaves a readable report, with the failure stated in place rather than a blank tab.
+    foreach ($d in $dataTabs) {
+        try {
+            & $d.fn -Sb $sb -ExportRoot $ExportRoot
+        } catch {
+            $why = [System.Net.WebUtility]::HtmlEncode([string]$_.Exception.Message)
+            [void]$sb.Append("<section class=`"tab`" id=`"tab-$($d.id)`"><h2>$($d.t)</h2>")
+            [void]$sb.Append("<div class=`"card`"><p>This section could not be rendered from the export: <code>$why</code></p>")
+            [void]$sb.Append("<p>The rest of the report is unaffected. The raw data is in the export itself.</p></div></section>")
+        }
+    }
 
     # ---- ROADMAP ---------------------------------------------------------------
     [void]$sb.Append("<section class=`"tab`" id=`"tab-roadmap`"><h2>Roadmap</h2><p>Derived from severity: High is a gap that exposes data or blocks recovery today; Medium is a control that should be in place before the engagement closes; Low and Info are hygiene and follow-ups.</p><div class=`"road`">")
