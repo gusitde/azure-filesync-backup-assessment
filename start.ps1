@@ -309,10 +309,20 @@ After that the join runs without elevation.
     if (Get-Module -ListAvailable -Name DnsServer) {
         Write-Good 'DnsServer module - conditional forwarders can be set from here'
     } else {
-        Write-Note 'the DnsServer module is not installed.'
-        Write-Explain "Not fatal: the forwarder script falls back to running the cmdlets inside a
-remoting session on each DNS server. Installing it locally gives clearer
-errors:  Install-WindowsFeature RSAT-DNS-Server   (elevated)"
+        Write-Note 'the DnsServer module is not installed - the forwarder step will probably fail.'
+        Write-Explain "Without it Get-DnsServerZone does not exist here, so the script falls back to
+running the cmdlets inside a remoting session ON each DNS server. That needs
+WinRM there AND rights there - and a domain controller usually refuses an
+account that is not in DnsAdmins or Domain Admins. In practice that fallback
+fails more often than it works, so treat this as a prerequisite, not a nicety.
+
+Install it once, from an ELEVATED PowerShell:
+  Install-WindowsFeature RSAT-DNS-Server                              # Windows Server
+  Add-WindowsCapability -Online -Name Rsat.Dns.Tools~~~~0.0.1.0       # Windows client
+
+The wizard also offers to collect a credential for the DNS servers, which is
+the other half of this - the module gets you the cmdlet, the credential gets
+you the rights."
     }
 
     return $ok
