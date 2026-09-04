@@ -19,3 +19,8 @@ deploy/deployment-context.json
 # assessment output and generated as-built documents - real resource names, never committed
 assessment-latest/
 as-built/
+
+# the portable PowerShell 7 the governance assessment uses, and its output
+.pwsh7/
+.azgovviz/
+governance/

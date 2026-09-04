@@ -1,6 +1,6 @@
 # Codex library - Azure Files with private endpoints, secure storage accounts, hybrid DNS, File Sync, Migrate and Backup (Contoso profile)
 
-Twenty-two codex entries (blueprints, playbooks, runbooks) plus 97 mermaid diagrams grouped by
+Twenty-three codex entries (blueprints, playbooks, runbooks) plus 97 mermaid diagrams grouped by
 architecture principle, written in the Luca codex format (`_MANIFEST.md` v1: 17 front-matter keys, the
 six-section body frame, executable `## Steps`, fenced gate rules, anchored references) so they
 can be imported into a codex (`blueprint.blueprints`) with `import-to-luca.mjs` and still be read
@@ -25,6 +25,7 @@ registry or the Azure Policy built-ins on 2026-09-03; each entry lists its sourc
 | `playbook-enable-file-sync-private-endpoint-and-cutover` | playbook | Storage Sync Service private endpoint, managed identity, AllowVirtualNetworksOnly with gates and rollback |
 | `playbook-enable-identity-based-auth-ad-ds` | playbook | AzFilesHybrid AD DS join (AES-256), share-level RBAC, Kerberos-only SMB |
 | `playbook-install-file-sync-agent-and-server-endpoint` | playbook | Agent install, server registration, sync group, cloud endpoint and server endpoint - and the identity split the cloud endpoint forces |
+| `playbook-run-the-tenant-governance-assessment` | playbook | The other assessment: wrap the Azure Governance Visualizer, feed it the deployment's subscription and tenant, and read both reports together |
 | `playbook-point-on-premises-dns-at-the-private-resolver` | playbook | The on-premises conditional forwarders: which zone to forward and why, the gate that refuses a resolver that is not answering, and the reverse path |
 | `playbook-azure-migrate-private-link-cache-storage` | playbook | Cache storage account + blob endpoint + vault identity + appliance DNS verification |
 | `playbook-enable-azure-backup-for-file-shares` | playbook | Vault (GRS + CRR first), policies with vault tier, protect every share, alert and restore tests |

@@ -421,6 +421,8 @@ line are masked before they reach the log.
 | `Render-AfsAssessmentHtml.ps1` | The HTML renderer the assessor and the as-built share (dot-source it) |
 | `deploy/` | The four inputs, the two phases, the teardown script and `Export-AfsAsBuilt.ps1` |
 | `onprem/` | The three steps that run against your own machines: the File Sync agent and server endpoint, the DNS forwarders, and the AD DS join |
+| `Invoke-AfsGovernanceAssessment.ps1` | The tenant policy and governance assessment - wraps the Azure Governance Visualizer |
+| `governance/` | Its output; not committed |
 | `as-built/` | Generated as-built documents (`AS-BUILT-<prefix>-<stamp>.md` + `.html`); not committed - they name real resources |
 | `logs/` | Every run's `.log`, `.jsonl` telemetry and console transcript; not committed |
 | `advise/` | The decision-led design path when there is nothing to assess |

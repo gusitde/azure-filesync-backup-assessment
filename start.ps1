@@ -470,6 +470,37 @@ something first (sign in again, register a provider), do it now, then answer yes
     return $false
 }
 
+function Invoke-GovernanceFlow {
+    <# The other assessment: not "is this estate built well" but "is the tenant around it
+       governed well". A separate tool answers that, so this runs it rather than reinventing
+       it, and feeds it the subscription and tenant from the deployment. #>
+    Write-Title 'Policy and governance across the tenant'
+    Write-Explain "The assessment in option 2 looks at File Sync and Backup. This one looks at
+everything around them - policy assignments, RBAC, management group structure,
+locks, Defender coverage - using the Azure Governance Visualizer.
+
+It is read-only, it needs Reader at the management group, and it needs
+PowerShell 7, which this kit does not run on. The script sorts that out."
+    $acct = Ensure-SignedIn
+    if (-not $acct) { return }
+    $args = @('-Context', $script:ContextFile)
+    if (-not (Test-Path $script:ContextFile)) {
+        Write-Note 'no deployment context - assessing the subscription you are signed in to.'
+        $args = @()
+    }
+    if (Read-YesNo -Question 'Dry run first?' -DefaultYes $true) {
+        try { & (Join-Path $script:Root 'Invoke-AfsGovernanceAssessment.ps1') @args -WhatIf }
+        catch { Show-AzureFailure -Message $_.Exception.Message -Context 'The dry run did not complete.' }
+    }
+    if (-not (Read-YesNo -Question 'Run it now? It can take a while on a large tenant.' -DefaultYes $true)) { return }
+    try {
+        & (Join-Path $script:Root 'Invoke-AfsGovernanceAssessment.ps1') @args -Confirm:$false
+    } catch {
+        Write-AfsLogException -ErrorRecord $_ -Context 'governance assessment failed'
+        Show-AzureFailure -Message $_.Exception.Message -Context 'The governance assessment did not complete.'
+    }
+}
+
 function Invoke-OnPremisesFlow {
     <# The three steps the Azure build deliberately does not do, because each one changes a
        machine you own rather than a subscription. Each has its own script under onprem/, and
@@ -568,14 +599,27 @@ found and skipped; only what is missing is created."
 }
 
 function Get-AfsReports {
-    <# Every assessment.html and as-built html in the repository, newest first. #>
+    <# The reports this kit produced, ours first. Deliberately NOT everything that matches:
+       the governance tool ships its own documentation and writes one page per subscription,
+       so listing every match buries the two reports someone actually came for. #>
     $found = @()
     foreach ($pattern in @('assessment.html', 'AS-BUILT-*.html')) {
         $found += @(Get-ChildItem -Path $script:Root -Filter $pattern -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch '\\(logs|\.git|node_modules)\\' })
+            Where-Object { $skip = $false; foreach ($seg in @('logs', '.git', 'node_modules', '.azgovviz', '.pwsh7')) { if ($_.FullName.Split([IO.Path]::DirectorySeparatorChar) -contains $seg) { $skip = $true } }; -not $skip })
     }
-    return @($found | Sort-Object LastWriteTime -Descending)
+    $ours = @($found | Sort-Object LastWriteTime -Descending)
+
+    # the governance summary only: the top level of governance\, not the per-subscription
+    # pages beneath it, and never the tool's own bundled documentation
+    $gov = @()
+    $govDir = Join-Path $script:Root 'governance'
+    if (Test-Path $govDir) {
+        $gov = @(Get-ChildItem -Path $govDir -Filter 'AzGovViz*.html' -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending)
+    }
+    return ,@($ours + $gov)
 }
+
 
 function Invoke-ReportsFlow {
     <# Menu entry: open the findings and as-built reports that have been produced. #>
@@ -588,7 +632,7 @@ function Invoke-ReportsFlow {
         }
         $labels = @()
         foreach ($r in $reports) {
-            $kind = if ($r.Name -like 'AS-BUILT-*') { 'as-built  ' } else { 'assessment' }
+            $kind = if ($r.Name -like 'AS-BUILT-*') { 'as-built  ' } elseif ($r.Name -like 'AzGovViz*') { 'governance' } else { 'assessment' }
             $labels += ("{0}  {1}  {2}" -f $kind, $r.LastWriteTime.ToString('yyyy-MM-dd HH:mm'), $r.FullName.Substring($script:Root.Length + 1))
         }
         $labels += 'Generate the as-built for the last build now'
@@ -1016,6 +1060,7 @@ while ($true) {
         $c = Read-Choice -Question 'What would you like to do?' -Options @(
             'Build a new Azure File Sync environment',
             'Assess an existing environment',
+            'Assess policy and governance across the tenant',
             'Remove an environment I built',
             'Just check my prerequisites',
             'Read the documentation',
@@ -1034,14 +1079,15 @@ while ($true) {
         switch ($c) {
             0 { Invoke-BuildFlow }
             1 { Invoke-AssessFlow }
-            2 { Invoke-RemoveFlow }
-            3 { [void](Test-Prerequisites -ForDeploy) }
-            4 { Invoke-DocsFlow }
-            5 { Invoke-CodexFlow }
-            6 { Invoke-OnPremisesFlow }
-            7 { Invoke-ResumeFlow }
-            8 { Invoke-ReportsFlow }
-            9 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
+            2 { Invoke-GovernanceFlow }
+            3 { Invoke-RemoveFlow }
+            4 { [void](Test-Prerequisites -ForDeploy) }
+            5 { Invoke-DocsFlow }
+            6 { Invoke-CodexFlow }
+            7 { Invoke-OnPremisesFlow }
+            8 { Invoke-ResumeFlow }
+            9 { Invoke-ReportsFlow }
+            10 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
         }
     } catch {
         Write-AfsLogException -ErrorRecord $_ -Context 'flow failed'

@@ -63,6 +63,24 @@ Optionally, on each registered file server (elevated PowerShell):
 .\Get-AfsServerDiagnostics.ps1 -OutputPath C:\temp      # add -SampleTieredFiles for a tiered-file census
 ```
 
+## The other assessment - policy and governance
+
+`Assess-AzFileSyncExport.ps1` judges the File Sync and Backup estate. It says nothing about the
+tenant around it. For that, [Invoke-AfsGovernanceAssessment.ps1](Invoke-AfsGovernanceAssessment.ps1)
+wraps the Azure Governance Visualizer rather than reinventing it - policy assignments, RBAC,
+management group hierarchy, locks, Defender coverage - and feeds it the subscription and tenant
+from your deployment context so it covers the estate you actually built.
+
+```powershell
+.\Invoke-AfsGovernanceAssessment.ps1 -Context .\deploy\deployment-context.json
+```
+
+Read-only, like everything on the assess side. Two things it handles for you: it needs
+PowerShell 7 while this kit runs on 5.1 (deliberately - AzFilesHybrid does not work on 7), so it
+shells out and will use a portable copy in `.pwsh7` if you have no local administrator to
+install one; and it checks you can read the management group first, because without Reader there
+the report comes back nearly empty and looks like a broken tool rather than a missing role.
+
 ## Connecting your own servers
 
 The build stops at the edge of Azure. Three steps happen on machines you own, and each has a
