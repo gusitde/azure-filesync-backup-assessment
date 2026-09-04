@@ -83,10 +83,26 @@ function ConvertTo-AfsHtmlFromMarkdown {
     return $out.ToString()
 }
 
-# The subject tabs. Each entry names a function in this file that renders exactly one
+# The subject tabs. Each renderer lives in its own file under render\ and emits exactly one
 # <section class="tab">. They are additive: a report produced without an export root simply
-# omits them, and adding a subject means adding a function plus a row here - nothing else.
-$script:AfsDataTabs = @()
+# omits them, and adding a subject means dropping in a file and adding a row here.
+# One file each because these are large - the estate has a lot to say - and because a failure
+# in one is then trivially isolated from the rest.
+foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'render') -Filter 'AfsTab-*.ps1' -File -ErrorAction SilentlyContinue)) {
+    try { . $f.FullName } catch { Write-Warning ('subject tab not loaded: ' + $f.Name + ' - ' + $_.Exception.Message) }
+}
+
+# Order is the order a reviewer reads an estate in: what is stored, how it syncs, how it is
+# protected, how it is reached, what runs it, what guards it, and where the evidence came from.
+$script:AfsDataTabs = @(
+    @{ id = 'storage';    t = 'Storage';    fn = 'Add-AfsTabStorage' },
+    @{ id = 'filesync';   t = 'File Sync';  fn = 'Add-AfsTabFileSync' },
+    @{ id = 'backup';     t = 'Backup';     fn = 'Add-AfsTabBackup' },
+    @{ id = 'network';    t = 'Network';    fn = 'Add-AfsTabNetwork' },
+    @{ id = 'servers';    t = 'Servers';    fn = 'Add-AfsTabServers' },
+    @{ id = 'adjacent';   t = 'Guardrails'; fn = 'Add-AfsTabGuardrails' },
+    @{ id = 'provenance'; t = 'Export';     fn = 'Add-AfsTabProvenance' }
+)
 
 function ConvertTo-AfsAssessmentHtml {
     param(

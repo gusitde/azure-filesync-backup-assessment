@@ -134,6 +134,56 @@ foreach ($name in $splatted) {
 Check ($bad.Count -eq 0) "no splatted variable is built as an array of switch names$(if ($bad.Count) { ' -> ' + ($bad -join '; ') })"
 Check ($splatted -notcontains 'args') 'nothing splats $args (an automatic variable)'
 
+# -- 5a. the subject tabs ----------------------------------------------------------------------
+# Each subject tab renders the estate itself, not the findings. Two things must hold: they all
+# appear and none throws (a thrown tab is caught and replaced with an apology, which is exactly
+# what we do not want shipping), and they survive an export that contains almost nothing.
+Write-Host '5a. subject tabs'
+$SUBJECTS = @('storage', 'filesync', 'backup', 'network', 'servers', 'adjacent', 'provenance')
+
+function Read-AfsTabs { param([string]$Html)
+    $h = Get-Content $Html -Raw
+    $btns = @([regex]::Matches($h, 'data-tab="([a-z0-9-]+)"') | ForEach-Object { $_.Groups[1].Value })
+    $secs = @([regex]::Matches($h, '<section class="tab[^"]*" id="tab-([a-z0-9-]+)"') | ForEach-Object { $_.Groups[1].Value })
+    return [pscustomobject]@{
+        Html = $h; Buttons = $btns; Sections = $secs
+        Failures = ([regex]::Matches($h, 'could not be rendered from the export')).Count
+        SvgOpen = ([regex]::Matches($h, '<svg')).Count
+        SvgClose = ([regex]::Matches($h, '</svg>')).Count
+    }
+}
+
+$fullDir = Join-Path $tmp 'tabs-full'
+& $assess -ExportPath $fixture -OutputPath $fullDir -CustomerName 'Fixture Contoso' | Out-Null
+$full = Read-AfsTabs (Join-Path $fullDir 'assessment.html')
+foreach ($sub in $SUBJECTS) { Check ($full.Sections -contains $sub) "the $sub tab is rendered" }
+Check (@(Compare-Object $full.Buttons $full.Sections -SyncWindow 0).Count -eq 0) 'every subject tab button has its section, in the same order'
+Check ($full.Failures -eq 0) "no subject tab threw (found $($full.Failures) apology panels)"
+Check ($full.SvgOpen -eq $full.SvgClose -and $full.SvgOpen -ge 7) "every diagram is closed ($($full.SvgOpen) svg)"
+# CSS variables are defined by each tab's own scoped style block; an undefined one renders invisibly
+$usedVars = @([regex]::Matches($full.Html, 'var\((--[a-z0-9-]+)\)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+$defVars  = @([regex]::Matches($full.Html, '(--[a-z0-9-]+)\s*:') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+$undef    = @($usedVars | Where-Object { $defVars -notcontains $_ })
+Check ($undef.Count -eq 0) "no CSS variable is used undefined$(if ($undef.Count) { ' -> ' + ($undef -join ', ') })"
+# the evidence must actually be the estate's, not a template
+foreach ($pair in @(@('stcontosofiles01','storage'), @('sss-contoso-files','filesync'), @('rsv-contoso-westus2','backup'), @('FS01','servers'))) {
+    $sec = [regex]::Match($full.Html, ('<section class="tab" id="tab-' + $pair[1] + '">(.*?)</section>'), 'Singleline')
+    Check ($sec.Success -and $sec.Groups[1].Value -like ('*' + $pair[0] + '*')) "the $($pair[1]) tab names $($pair[0]) from the export"
+}
+
+# An export with nothing in it is the common real case, and the tabs must say so calmly.
+$sparse = Join-Path $tmp 'sparse-export'
+New-Item -ItemType Directory -Path $sparse -Force | Out-Null
+'{"exportedAtUtc":"2026-09-04T12:00:00Z","toolVersion":"1.0.0","subscriptions":[],"counts":{}}' | Set-Content (Join-Path $sparse 'manifest.json') -Encoding UTF8
+'{"storageSyncServices":[],"storageAccounts":[],"recoveryServicesVaults":[],"dataProtectionVaults":[],"privateDnsZones":[],"privateEndpoints":[]}' | Set-Content (Join-Path $sparse 'inventory.json') -Encoding UTF8
+'[]' | Set-Content (Join-Path $sparse 'errors.json') -Encoding UTF8
+$sparseDir = Join-Path $tmp 'tabs-sparse'
+& $assess -ExportPath $sparse -OutputPath $sparseDir -CustomerName 'Empty Estate' | Out-Null
+$bare = Read-AfsTabs (Join-Path $sparseDir 'assessment.html')
+Check (@(Compare-Object $bare.Sections $full.Sections -SyncWindow 0).Count -eq 0) 'a nearly-empty export still renders every tab'
+Check ($bare.Failures -eq 0) "no tab threw on a nearly-empty export (found $($bare.Failures))"
+Check ($bare.SvgOpen -eq $bare.SvgClose) 'diagrams stay balanced with no data to draw'
+
 # -- 5c. the assessment-results flow ----------------------------------------------------------
 # The tab list is read out of the report so it cannot drift. `return ,$x` emits the array as ONE
 # object, so a caller that also wraps in @() gets Count=1 and silently flattens every field -
