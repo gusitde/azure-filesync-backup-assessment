@@ -63,6 +63,12 @@ function Invoke-Az {
     return Invoke-AfsAz -Args $Args
 }
 
+function ConvertTo-AfsCount {
+    # count whatever came back, whether that is nothing, one thing, or many
+    param($Value)
+    return (ConvertTo-Array $Value).Count
+}
+
 function ConvertTo-Array {
     <#  @(Invoke-Az ...) does NOT flatten: a function that returns an Object[] is emitted
         as a single item, so the array subexpression yields one element containing the
@@ -176,13 +182,21 @@ if ($VaultName) {
 }
 
 Write-Step 'Resource locks'
-$locks = ConvertTo-Array (Invoke-Az @('lock', 'list', '-g', $ResourceGroup, '--query', '[].name', '-o', 'json') -AllowFailure)
+# Delete each lock BY ITS ID. A lock listed for this group usually lives on a resource inside
+# it - Azure Backup puts AzureBackupProtectionLock on the storage account - and
+# 'az lock delete -n <name> -g <group>' addresses a lock at the GROUP scope with that name.
+# That reports success, removes nothing, and the storage account then refuses to delete with
+# ScopeLocked while the log says the lock was removed. Verify afterwards rather than trust it.
+$locks = ConvertTo-Array (Invoke-Az @('lock', 'list', '-g', $ResourceGroup, '--query', '[].{name:name,id:id}', '-o', 'json') -AllowFailure)
 foreach ($l in $locks) {
-    if ($PSCmdlet.ShouldProcess($l, 'delete lock')) {
-        Invoke-Az @('lock', 'delete', '-n', $l, '-g', $ResourceGroup) -AllowFailure | Out-Null
-        Write-Ok ("lock removed: " + $l)
+    if ($PSCmdlet.ShouldProcess($l.name, 'delete lock')) {
+        Invoke-Az @('lock', 'delete', '--ids', $l.id) -AllowFailure | Out-Null
+        $still = Invoke-Az @('lock', 'show', '--ids', $l.id, '--query', 'name', '-o', 'tsv') -AllowFailure
+        if ($still) { Write-Warn2 ("lock NOT removed: " + $l.name + " (" + $l.id + ")") }
+        else { Write-Ok ("lock removed: " + $l.name) }
     }
 }
+if ($locks.Count -eq 0) { Write-Ok 'no locks' }
 
 Write-Step ('Resource group ' + $ResourceGroup)
 if ($script:VaultBlocked) {
@@ -190,15 +204,46 @@ if ($script:VaultBlocked) {
     # Dependencies (endpoint before its NIC and subnet, inbound endpoint before the resolver)
     # sort themselves out across passes: whatever fails this pass is retried on the next.
     Write-Warn2 'resource group kept (the vault is still in it); removing every other resource individually'
-    for ($pass = 1; $pass -le 4; $pass++) {
-        $ids = ConvertTo-Array (Invoke-Az @('resource', 'list', '-g', $ResourceGroup, '--query', "[?type!='Microsoft.RecoveryServices/vaults'].id", '-o', 'json') -AllowFailure)
-        if ($ids.Count -eq 0) { break }
-        Write-Host ("      ..    pass " + $pass + ": " + $ids.Count + " resource(s) left") -ForegroundColor DarkGray
-        foreach ($id in $ids) {
-            if ($PSCmdlet.ShouldProcess($id, 'delete resource')) {
-                Invoke-Az @('resource', 'delete', '--ids', $id, '-o', 'none') -AllowFailure | Out-Null
+
+    # Order matters, and Azure says so plainly when you get it wrong:
+    #   InUseSubnetCannotBeDeleted   - the virtual network is held by a network interface
+    #   NicInUseWithPrivateEndpoint  - the interface is held by its private endpoint
+    # So delete children before parents. Anything unranked goes in the middle, and the loop
+    # runs until a whole pass removes nothing rather than a fixed number of times - a fixed
+    # count leaves a chain half-unwound and reports "still present" on a teardown that was
+    # only ever one pass short.
+    $rank = [ordered]@{
+        'Microsoft.Insights/metricalerts'                        = 10
+        'Microsoft.Network/privateDnsZones/virtualNetworkLinks'  = 20
+        'Microsoft.StorageSync/storageSyncServices'              = 30
+        'Microsoft.Network/privateEndpoints'                     = 40
+        'Microsoft.Network/networkInterfaces'                    = 50
+        'Microsoft.Network/dnsResolvers/inboundEndpoints'        = 60
+        'Microsoft.Network/dnsResolvers'                         = 70
+        'Microsoft.Storage/storageAccounts'                      = 80
+        'Microsoft.Network/privateDnsZones'                      = 90
+        'Microsoft.Network/virtualNetworks'                      = 100
+    }
+    $pass = 0
+    while ($true) {
+        $pass++
+        $items = ConvertTo-Array (Invoke-Az @('resource', 'list', '-g', $ResourceGroup, '--query', "[?type!='Microsoft.RecoveryServices/vaults'].{id:id,type:type,name:name}", '-o', 'json') -AllowFailure)
+        if ($items.Count -eq 0) { break }
+        Write-Host ("      ..    pass " + $pass + ": " + $items.Count + " resource(s) left") -ForegroundColor DarkGray
+        $before = $items.Count
+        $ordered = $items | Sort-Object @{ Expression = { if ($rank.Contains($_.type)) { $rank[$_.type] } else { 55 } } }, name
+        foreach ($item in $ordered) {
+            if ($PSCmdlet.ShouldProcess($item.name, ('delete ' + $item.type))) {
+                Invoke-Az @('resource', 'delete', '--ids', $item.id, '-o', 'none') -AllowFailure | Out-Null
             }
         }
+        $after = (ConvertTo-AfsCount (Invoke-Az @('resource', 'list', '-g', $ResourceGroup, '--query', "[?type!='Microsoft.RecoveryServices/vaults'].name", '-o', 'json') -AllowFailure))
+        if ($after -eq 0) { break }
+        if ($after -ge $before) {
+            Write-Warn2 ('a full pass removed nothing - ' + $after + ' resource(s) are held by something this script cannot see')
+            break
+        }
+        if ($WhatIfPreference) { break }
     }
     $left = ConvertTo-Array (Invoke-Az @('resource', 'list', '-g', $ResourceGroup, '--query', "[?type!='Microsoft.RecoveryServices/vaults'].name", '-o', 'json') -AllowFailure)
     if ($left.Count) { Write-Warn2 ("still present: " + ($left -join ', ')) } else { Write-Ok 'everything except the vault is gone' }

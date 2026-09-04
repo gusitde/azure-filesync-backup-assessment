@@ -34,6 +34,7 @@ $script:RepoUrl    = 'https://github.com/gusitde/azure-filesync-backup-assessmen
 
 . (Join-Path $script:DeployDir 'AfsLog.ps1')
 . (Join-Path $script:DeployDir 'AfsConfig.ps1')
+. (Join-Path $script:DeployDir 'AfsSettings.ps1')
 $script:LogFile = Start-AfsLog -Level $LogLevel -Name 'wizard'
 
 # ------------------------------------------------------------------ ui ------
@@ -468,6 +469,104 @@ something first (sign in again, register a provider), do it now, then answer yes
         Write-Title ("Phase 2 - retry " + ($attempt + 1))
     }
     return $false
+}
+
+function Invoke-SettingsFlow {
+    <# Everything the build derives is editable, but nothing says so unless you read the
+       resolver. This lists each setting with the value actually in force - yours, or the one
+       derived from the name prefix - and lets you change any of it. #>
+    if (-not (Test-Path $script:InputsFile)) {
+        Write-Title 'Deployment settings'
+        Write-Note 'there is no inputs file yet.'
+        Write-Explain "Settings live in deploy\inputs.json. The build writes one for you, or it
+can be copied from the sample."
+        if (-not (Read-YesNo -Question 'Create one from the sample now?' -DefaultYes $true)) { return }
+        Copy-Item (Join-Path $script:DeployDir 'inputs.sample.jsonc') $script:InputsFile -Force
+        Write-Good ('created ' + $script:InputsFile)
+    }
+
+    while ($true) {
+        $inputs = Read-AfsJsonc -Path $script:InputsFile
+        $resolved = $null
+        try { $resolved = Resolve-AfsConfig -Inputs $inputs } catch { }
+        $catalog = Get-AfsSettingCatalog
+        $groups = @($catalog | ForEach-Object { $_.Group } | Select-Object -Unique)
+
+        Write-Title 'Deployment settings'
+        Write-Explain "Anything marked (derived) follows from the name prefix. Change the prefix and
+they move together; set one explicitly and it stops following."
+        Write-Host ''
+        foreach ($g in $groups) {
+            Write-Host ('  ' + $g) -ForegroundColor White
+            foreach ($item in ($catalog | Where-Object { $_.Group -eq $g })) {
+                $e = Get-AfsEffectiveValue -Inputs $inputs -Resolved $resolved -Setting $item
+                $shown = if ($null -eq $e.Value) { '(not set)' } else { [string]$e.Value }
+                $tag = if ($e.Source -eq 'derived') { ' (derived)' } else { '' }
+                Write-Host ("    {0,-32} {1}{2}" -f $item.Label, $shown, $tag) -ForegroundColor DarkGray
+            }
+        }
+
+        $opts = @($groups | ForEach-Object { 'Change something under ' + $_ }) + @('Show what it all resolves to', 'Back')
+        $choice = Read-Choice -Question 'What now?' -Options $opts
+        if ($choice -eq $groups.Count) {
+            if ($resolved) { Show-AfsConfig -Config $resolved }
+            else { Write-Bad 'the settings do not resolve yet - fill in the ones shown as (not set).' }
+            continue
+        }
+        if ($choice -eq ($groups.Count + 1)) { return }
+
+        $group = $groups[$choice]
+        $items = @($catalog | Where-Object { $_.Group -eq $group })
+        $labels = @()
+        foreach ($item in $items) {
+            $e = Get-AfsEffectiveValue -Inputs $inputs -Resolved $resolved -Setting $item
+            $labels += ("{0}  =  {1}" -f $item.Label, $(if ($null -eq $e.Value) { '(not set)' } else { [string]$e.Value }))
+        }
+        $labels += 'Back'
+        $pick = Read-Choice -Question ($group + ' - which setting?') -Options $labels
+        if ($pick -eq $items.Count) { continue }
+
+        $item = $items[$pick]
+        $e = Get-AfsEffectiveValue -Inputs $inputs -Resolved $resolved -Setting $item
+        Write-Host ''
+        Write-Host ('  ' + $item.Label) -ForegroundColor White
+        if ($item.ContainsKey('Why')) { Write-Explain $item.Why }
+        if ($e.Source -eq 'derived') { Write-Explain ('Derived as ' + $e.Value + ' today. Setting it here stops it following the prefix.') }
+
+        if ($item.ContainsKey('Bool')) {
+            $new = Read-YesNo -Question 'Turn this on?' -DefaultYes ([bool]$e.Value)
+            Set-AfsInputValue -Inputs $inputs -Path $item.Path -Value $new
+        } else {
+            $default = ''
+            if ($null -ne $e.Value) { $default = [string]$e.Value }
+            $pattern = $null
+            if ($item.ContainsKey('Pattern')) { $pattern = $item.Pattern }
+            $help = $null
+            if ($item.ContainsKey('Help')) { $help = 'Expected: ' + $item.Help }
+            $ans = Read-Answer -Question 'New value' -Default $default -Pattern $pattern -PatternHelp $help -AllowEmpty
+            if ($ans -eq '') {
+                Set-AfsInputValue -Inputs $inputs -Path $item.Path -Value $null
+                Write-Note 'cleared - it goes back to being derived.'
+            } elseif ($item.ContainsKey('Int')) {
+                Set-AfsInputValue -Inputs $inputs -Path $item.Path -Value ([int]$ans)
+            } else {
+                Set-AfsInputValue -Inputs $inputs -Path $item.Path -Value $ans
+            }
+        }
+
+        # prove it still resolves BEFORE writing, so a typo cannot leave an unbuildable file
+        try {
+            $check = Resolve-AfsConfig -Inputs $inputs
+            Save-AfsInputs -Inputs $inputs -Path $script:InputsFile
+            Write-Good ('saved to ' + $script:InputsFile)
+            if ($item.Path -eq 'azure.namePrefix') {
+                Write-Explain ('Everything derived moved with it: ' + $check.resourceGroup + ', ' + $check.storageAccountName + ', ' + $check.storageSyncServiceName + ', ' + $check.vaultName)
+            }
+        } catch {
+            Write-Bad ('that value does not resolve: ' + $_.Exception.Message)
+            Write-Explain 'Nothing was saved. Pick it again and enter something else.'
+        }
+    }
 }
 
 function Invoke-GovernanceFlow {
@@ -1058,6 +1157,7 @@ try {
 while ($true) {
     try {
         $c = Read-Choice -Question 'What would you like to do?' -Options @(
+            'Deployment settings - names, region, network, backup, directory',
             'Build a new Azure File Sync environment',
             'Assess an existing environment',
             'Assess policy and governance across the tenant',
@@ -1077,17 +1177,18 @@ while ($true) {
     }
     try {
         switch ($c) {
-            0 { Invoke-BuildFlow }
-            1 { Invoke-AssessFlow }
-            2 { Invoke-GovernanceFlow }
-            3 { Invoke-RemoveFlow }
-            4 { [void](Test-Prerequisites -ForDeploy) }
-            5 { Invoke-DocsFlow }
-            6 { Invoke-CodexFlow }
-            7 { Invoke-OnPremisesFlow }
-            8 { Invoke-ResumeFlow }
-            9 { Invoke-ReportsFlow }
-            10 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
+            0 { Invoke-SettingsFlow }
+            1 { Invoke-BuildFlow }
+            2 { Invoke-AssessFlow }
+            3 { Invoke-GovernanceFlow }
+            4 { Invoke-RemoveFlow }
+            5 { [void](Test-Prerequisites -ForDeploy) }
+            6 { Invoke-DocsFlow }
+            7 { Invoke-CodexFlow }
+            8 { Invoke-OnPremisesFlow }
+            9 { Invoke-ResumeFlow }
+            10 { Invoke-ReportsFlow }
+            11 { Write-Host ''; Write-Host '  Bye.' -ForegroundColor White; Write-Host ''; Stop-AfsLog -Outcome 'ended by user'; return }
         }
     } catch {
         Write-AfsLogException -ErrorRecord $_ -Context 'flow failed'

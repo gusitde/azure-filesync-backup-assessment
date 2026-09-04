@@ -180,13 +180,26 @@ Write-AfsOk ('Az.Storage ' + $azStorage.Version)
 
 [void](Confirm-AfsAzPowerShell -SubscriptionId $sub -TenantId (Get-AfsProperty $ctx.identity 'tenantId'))
 
-$account = Get-AzStorageAccount -ResourceGroupName $rg -Name $sa -ErrorAction Stop
-$idAuth  = $account.AzureFilesIdentityBasedAuth
-$current = $(if ($idAuth) { [string]$idAuth.DirectoryServiceOptions } else { '' })
-if ($current -and $current -notin @('AD', 'None')) {
-    throw ("$sa already uses a different identity source ($current). A storage account supports one at a time - disable that one before enabling AD DS.")
+# The storage account may be gone - somebody deleted the resource group before running this,
+# which is the common order of events and leaves the AD object orphaned. That must not stop
+# the cleanup: the object is findable by its service principal name without Azure's help.
+$account = $null
+try { $account = Get-AzStorageAccount -ResourceGroupName $rg -Name $sa -ErrorAction Stop } catch { }
+if (-not $account) {
+    if (-not $Remove) {
+        throw ("Storage account $sa was not found in $rg. Build it first, or check the context.")
+    }
+    Write-AfsWarn ($sa + ' no longer exists in ' + $rg)
+    Write-AfsSay 'Its Active Directory object may still be there. Carrying on to clean that up.'
+    $current = ''
+} else {
+    $idAuth  = $account.AzureFilesIdentityBasedAuth
+    $current = $(if ($idAuth) { [string]$idAuth.DirectoryServiceOptions } else { '' })
+    if ($current -and $current -notin @('AD', 'None')) {
+        throw ("$sa already uses a different identity source ($current). A storage account supports one at a time - disable that one before enabling AD DS.")
+    }
+    Write-AfsOk ('storage account identity source: ' + $(if ($current) { $current } else { 'none' }))
 }
-Write-AfsOk ('storage account identity source: ' + $(if ($current) { $current } else { 'none' }))
 
 Import-Module ActiveDirectory -ErrorAction Stop -Verbose:$false
 
@@ -203,7 +216,9 @@ if ($Remove) {
     else { Write-AfsInfo ('no AD object carries the SPN ' + $spn) }
 
     Write-AfsStep 'Disable AD DS on the storage account'
-    if ($current -ne 'AD') {
+    if (-not $account) {
+        Write-AfsOk 'the storage account is already gone - nothing to disable'
+    } elseif ($current -ne 'AD') {
         Write-AfsOk 'AD DS is not enabled on this storage account'
     } elseif ($PSCmdlet.ShouldProcess($sa, 'disable AD DS authentication')) {
         # NOTE the parameter name. -EnableAzureActiveDirectoryDomainServicesForFile is a
