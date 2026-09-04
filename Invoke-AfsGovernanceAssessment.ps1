@@ -273,6 +273,11 @@ Write-GovSay 'Read-only. It walks the management group hierarchy, so it takes a 
 
 if (-not (Test-Path $OutputPath)) { New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null }
 
+# Mark the moment, so the collect step can tell what THIS run produced from what was
+# already sitting in the folder. Without it a what-if reports yesterday's files as its
+# own output - and, more seriously, so does a real run whose assessment produced nothing.
+$runStartedAt = Get-Date
+
 $govArgs = @(
     '-NoProfile', '-File', $entry,
     '-ManagementGroupId', $ManagementGroupId,
@@ -297,18 +302,33 @@ if ($PSCmdlet.ShouldProcess($ManagementGroupId, 'run the governance assessment')
 
 Write-GovStep 'Collect the output'
 
-$produced = @()
+$all = @()
 if (Test-Path $OutputPath) {
-    $produced = @(Get-ChildItem $OutputPath -File -Recurse -ErrorAction SilentlyContinue |
+    $all = @(Get-ChildItem $OutputPath -File -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -in @('.html', '.md', '.csv', '.json') } | Sort-Object LastWriteTime -Descending)
 }
+# Only files written since this run began are this run's output. Everything else is a
+# leftover, and calling it "OK" would report a previous assessment as though it were current.
+$produced = @($all | Where-Object { $_.LastWriteTime -ge $runStartedAt })
+$leftover = @($all | Where-Object { $_.LastWriteTime -lt $runStartedAt })
+
 if ($produced.Count) {
     foreach ($f in ($produced | Select-Object -First 8)) {
         Write-GovOk ($f.Name + '  (' + [math]::Round($f.Length / 1KB) + ' KB)')
     }
     if ($produced.Count -gt 8) { Write-GovInfo ('and ' + ($produced.Count - 8) + ' more') }
-} elseif (-not $WhatIfPreference) {
-    Write-GovWarn 'no output files were produced - check the log'
+} elseif ($WhatIfPreference) {
+    Write-GovInfo 'nothing was written - this was a what-if.'
+    if ($leftover.Count) {
+        Write-GovInfo ('the folder already holds ' + $leftover.Count + ' file(s) from a previous run, newest ' +
+                       $leftover[0].LastWriteTime.ToString('yyyy-MM-dd HH:mm') + ' - they are NOT from this run')
+    }
+} else {
+    Write-GovWarn 'this run produced no output files - check the log before trusting anything in that folder.'
+    if ($leftover.Count) {
+        Write-GovWarn ('what is there is older: ' + $leftover.Count + ' file(s), newest ' +
+                       $leftover[0].LastWriteTime.ToString('yyyy-MM-dd HH:mm') + '. Do not read it as current.')
+    }
 }
 
 # ----------------------------------------------------------------- report ----
