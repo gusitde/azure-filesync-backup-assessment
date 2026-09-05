@@ -194,6 +194,36 @@ Check ($vDeg.CanProceed -and $vDeg.Degraded -eq 1) 'a degraded requirement does 
 
 Check ((Get-Content (Join-Path $repo 'start.ps1') -Raw) -like '*function Invoke-RequirementsFlow*') 'the wizard exposes the requirements flow'
 
+# The two remote areas. Both must obey the contract with NO target and with an UNREACHABLE one -
+# those are the paths that throw, hang, or claim proof they do not have.
+foreach ($area in @(
+    @{ Fn = 'Get-AfsDnsRequirements'; Empty = { Get-AfsDnsRequirements -DnsServer @() }
+       Bad = { Get-AfsDnsRequirements -DnsServer @('no-such-host-afs-test.invalid') } },
+    @{ Fn = 'Get-AfsAdRequirements';  Empty = { Get-AfsAdRequirements -DomainFqdn '' -OrganizationalUnit '' }
+       Bad = { Get-AfsAdRequirements -DomainFqdn 'no-such-domain-afs-test.invalid' -OrganizationalUnit 'OU=X,DC=no-such-domain-afs-test,DC=invalid' } })) {
+    Check ([bool](Get-Command $area.Fn -ErrorAction SilentlyContinue)) "$($area.Fn) is defined"
+    $none = $null
+    try { $none = & $area.Empty } catch { $none = $null }
+    Check ($null -ne $none) "$($area.Fn) does not throw with no target named"
+    if ($none) {
+        Check (@($none | Where-Object { $_.State -eq 'ok' }).Count -eq 0) "$($area.Fn) reports nothing as ok when it has no target"
+        Check (@($none | Where-Object { $_.State -eq 'unknown' }).Count -ge 1) "$($area.Fn) reports unknown when it has no target"
+    }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $bad = $null
+    try { $bad = & $area.Bad } catch { $bad = $null }
+    $sw.Stop()
+    Check ($null -ne $bad) "$($area.Fn) does not throw on an unreachable target"
+    Check ($sw.Elapsed.TotalSeconds -lt 180) "$($area.Fn) finishes on an unreachable target in under 3 min ($([int]$sw.Elapsed.TotalSeconds)s)"
+    if ($bad) {
+        # An unreachable host proves nothing. A PROVEN blocker there is a false stop.
+        $false1 = @($bad | Where-Object { $_.State -eq 'missing' -and $_.Severity -eq 'blocker' -and $_.Remote })
+        Check ($false1.Count -eq 0) "$($area.Fn) claims no proven remote blocker against an unreachable target$(if ($false1.Count) { ' -> ' + (($false1 | ForEach-Object { $_.Name }) -join '; ') })"
+        Check (@($bad | Where-Object { $_.State -notin @('ok','missing','unknown') }).Count -eq 0) "$($area.Fn) states stay valid on an unreachable target"
+        Check (@($bad | Where-Object { $_.State -ne 'ok' -and -not $_.Fix }).Count -eq 0) "$($area.Fn) still carries a fix for everything not ok"
+    }
+}
+
 # -- 5a. the subject tabs ----------------------------------------------------------------------
 # Each subject tab renders the estate itself, not the findings. Two things must hold: they all
 # appear and none throws (a thrown tab is caught and replaced with an apology, which is exactly

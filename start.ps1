@@ -1436,6 +1436,25 @@ function Show-AfsRequirements {
     $all += Get-AfsLocalRequirements
     $all += Get-AfsAzureRequirements -Config $cfg
 
+    # The remaining areas check things this machine cannot see on its own. Each runs only when
+    # the settings name its target, and each is guarded by Get-Command so the wizard still works
+    # against a copy of the kit that predates them.
+    if (Get-Command Get-AfsAssessRequirements -ErrorAction SilentlyContinue) {
+        $all += Get-AfsAssessRequirements -Config $cfg
+    }
+    if ($cfg -and (Get-Command Get-AfsDnsRequirements -ErrorAction SilentlyContinue)) {
+        $dnsList = @()
+        $op = Get-AfsProp $cfg 'onPremises'
+        $dnsRaw = [string](Get-AfsProp $op 'dnsServers' '')
+        if ($dnsRaw) { $dnsList = @($dnsRaw -split '[,;]' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+        $all += Get-AfsDnsRequirements -DnsServer $dnsList
+    }
+    if ($cfg -and (Get-Command Get-AfsAdRequirements -ErrorAction SilentlyContinue)) {
+        $all += Get-AfsAdRequirements -DomainFqdn ([string](Get-AfsProp $cfg 'adDomainFqdn' '')) `
+                                      -OrganizationalUnit ([string](Get-AfsProp $cfg 'adOuDn' '')) `
+                                      -Config $cfg
+    }
+
     if ($IncludeServer) {
         # Only ever the server the settings name, or one the operator types. Never a guess.
         $fs = ''
@@ -1464,7 +1483,8 @@ function Show-AfsRequirements {
         $colour = switch ($r.State) { 'ok' { 'Green' } 'missing' { 'Red' } default { 'Yellow' } }
         $badge  = switch ($r.State) { 'ok' { '[ok]  ' } 'missing' { '[!]   ' } default { '[?]   ' } }
         $sev = if ($r.Severity -eq 'blocker') { '' } else { '  (' + $r.Severity + ')' }
-        Write-Host ('    ' + $badge + $r.Name.PadRight(32) + $r.Detail + $sev) -ForegroundColor $colour
+        # 36, because 'provider Microsoft.RecoveryServices' is 35 and ran into its own detail
+        Write-Host ('    ' + $badge + $r.Name.PadRight(36) + $r.Detail + $sev) -ForegroundColor $colour
         if ($r.State -ne 'ok' -and $r.Fix) { Write-Host ('             ' + $r.Fix) -ForegroundColor DarkGray }
     }
 
