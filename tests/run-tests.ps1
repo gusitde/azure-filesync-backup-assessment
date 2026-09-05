@@ -152,6 +152,48 @@ Check (([regex]::Matches($nwMd, 'Northwind Traders (AD DS|policy|file data|recor
 $catOut = & $assess -ListRules
 Check ((($catOut -join "`n") -notmatch 'Contoso (AD DS|policy|file data|records)')) 'the rule catalog carries no customer name either'
 
+# -- 4c. the requirements check ----------------------------------------------------------------
+# A checker that dies is a checker that lies, and a checker that reports "I could not look" as
+# "ok" is worse than none. Both are asserted here rather than assumed.
+Write-Host '4c. requirements'
+. (Join-Path $repo 'deploy\AfsRequirements.ps1')
+
+# a probe that throws must become 'unknown', never an exception and never 'ok'
+$boom = Invoke-AfsProbe -Area 'T' -Name 'throws' -Probe { throw 'deliberate' }
+Check ($boom -and $boom.State -eq 'unknown') "a throwing probe degrades to unknown (got '$($boom.State)')"
+Check ($boom.Detail -like '*deliberate*') 'and it carries the reason it could not be checked'
+$nul = Invoke-AfsProbe -Area 'T' -Name 'returns nothing' -Probe { }
+Check ($nul.State -eq 'unknown') 'a probe returning nothing is unknown, not ok'
+
+# the local checks must run on any machine and describe themselves fully
+$loc = Get-AfsLocalRequirements
+Check ($loc.Count -ge 6) "the local checks ran ($($loc.Count) of them)"
+Check (@($loc | Where-Object { -not $_.Area -or -not $_.Name }).Count -eq 0) 'every result names its area and requirement'
+Check (@($loc | Where-Object { $_.State -notin @('ok','missing','unknown') }).Count -eq 0) 'every state is one of ok/missing/unknown'
+Check (@($loc | Where-Object { $_.Severity -notin @('blocker','degraded','advisory') }).Count -eq 0) 'every severity is one of blocker/degraded/advisory'
+Check (@($loc | Where-Object { $_.State -ne 'ok' -and -not $_.Fix }).Count -eq 0) 'anything not ok carries a fix'
+Check (@($loc | Where-Object { $_.State -eq 'ok' -and -not $_.Detail }).Count -eq 0) 'an ok result still carries the value it observed'
+
+# no server named = unknown, and above all no throw and no invented hostname
+$noSrv = Get-AfsServerRequirements -FileServer ''
+Check ($noSrv.Count -eq 1 -and $noSrv[0].State -eq 'unknown') 'with no file server named, the server checks report unknown rather than passing'
+Check ($noSrv[0].Detail -like '*no file server was named*') 'and say why they could not run'
+
+# the verdict: only a PROVEN blocker stops the run, but an unknown one is never silently a pass
+$vMissing = Get-AfsRequirementVerdict -Results @(
+    (New-AfsReq -Area 'A' -Name 'x' -State 'missing' -Severity 'blocker'),
+    (New-AfsReq -Area 'A' -Name 'y' -State 'ok' -Severity 'blocker' -Detail 'v1'))
+Check (-not $vMissing.CanProceed -and $vMissing.Blockers -eq 1) 'a missing blocker stops the run'
+$vUnknown = Get-AfsRequirementVerdict -Results @(
+    (New-AfsReq -Area 'A' -Name 'x' -State 'unknown' -Severity 'blocker'),
+    (New-AfsReq -Area 'A' -Name 'y' -State 'ok' -Severity 'blocker' -Detail 'v1'))
+Check ($vUnknown.CanProceed -and $vUnknown.UnknownBlockers -eq 1) 'an unknown blocker does not stop the run, but is counted'
+Check ($vUnknown.UnknownList.Count -eq 1) 'and is carried out so the caller can name it'
+$vDeg = Get-AfsRequirementVerdict -Results @((New-AfsReq -Area 'A' -Name 'z' -State 'missing' -Severity 'degraded'))
+Check ($vDeg.CanProceed -and $vDeg.Degraded -eq 1) 'a degraded requirement does not stop the run'
+
+Check ((Get-Content (Join-Path $repo 'start.ps1') -Raw) -like '*function Invoke-RequirementsFlow*') 'the wizard exposes the requirements flow'
+
 # -- 5a. the subject tabs ----------------------------------------------------------------------
 # Each subject tab renders the estate itself, not the findings. Two things must hold: they all
 # appear and none throws (a thrown tab is caught and replaced with an apology, which is exactly

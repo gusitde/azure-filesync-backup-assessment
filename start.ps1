@@ -35,6 +35,7 @@ $script:RepoUrl    = 'https://github.com/gusitde/azure-filesync-backup-assessmen
 . (Join-Path $script:DeployDir 'AfsLog.ps1')
 . (Join-Path $script:DeployDir 'AfsConfig.ps1')
 . (Join-Path $script:DeployDir 'AfsSettings.ps1')
+. (Join-Path $script:DeployDir 'AfsRequirements.ps1')
 $script:LogFile = Start-AfsLog -Level $LogLevel -Name 'wizard'
 
 # ------------------------------------------------------------------ ui ------
@@ -1419,6 +1420,83 @@ function Open-Target {
     }
 }
 
+function Show-AfsRequirements {
+    <#  The deep check. Test-Prerequisites answers "what is installed here"; this answers "will
+        the run succeed", which is a different and larger question - it covers the subscription,
+        the roles a step needs, and the file server, none of which can be inferred from this
+        machine. Read-only throughout. #>
+    param([switch]$IncludeServer)
+
+    $cfg = $null
+    if (Test-Path $script:InputsFile) {
+        try { $cfg = Resolve-AfsConfig -Inputs (Read-AfsJsonc -Path $script:InputsFile) } catch { }
+    }
+
+    $all = @()
+    $all += Get-AfsLocalRequirements
+    $all += Get-AfsAzureRequirements -Config $cfg
+
+    if ($IncludeServer) {
+        # Only ever the server the settings name, or one the operator types. Never a guess.
+        $fs = ''
+        $paths = @()
+        if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'onPremises') -and $cfg.onPremises) {
+            $fs = [string](Get-AfsProp $cfg.onPremises 'fileServer' '')
+            $sp = Get-AfsProp $cfg.onPremises 'serverPaths'
+            if ($sp) { foreach ($p in $sp.PSObject.Properties) { $paths += [string]$p.Value } }
+        }
+        if (-not $fs) {
+            $fs = Read-Answer -Question 'Which file server should I check?' -Why 'Leave empty to skip the server checks.' -AllowEmpty
+        }
+        if ($fs) {
+            $cred = $null
+            if (Read-YesNo -Question ('Use a different account to reach ' + $fs + '?') -Why 'Reading the server state needs local-administrator rights there.' -DefaultYes $false) {
+                $cred = Get-Credential -Message ('Local administrator on ' + $fs)
+            }
+            Write-Explain ('Checking ' + $fs + ' - this opens one session and asks everything at once.')
+            $all += Get-AfsServerRequirements -FileServer $fs -Credential $cred -Paths $paths
+        }
+    }
+
+    $area = ''
+    foreach ($r in $all) {
+        if ($r.Area -ne $area) { $area = $r.Area; Write-Host ''; Write-Host ('  ' + $area) -ForegroundColor White }
+        $colour = switch ($r.State) { 'ok' { 'Green' } 'missing' { 'Red' } default { 'Yellow' } }
+        $badge  = switch ($r.State) { 'ok' { '[ok]  ' } 'missing' { '[!]   ' } default { '[?]   ' } }
+        $sev = if ($r.Severity -eq 'blocker') { '' } else { '  (' + $r.Severity + ')' }
+        Write-Host ('    ' + $badge + $r.Name.PadRight(32) + $r.Detail + $sev) -ForegroundColor $colour
+        if ($r.State -ne 'ok' -and $r.Fix) { Write-Host ('             ' + $r.Fix) -ForegroundColor DarkGray }
+    }
+
+    $v = Get-AfsRequirementVerdict -Results $all
+    Write-Host ''
+    Write-Host ('  {0} checks - {1} ok, {2} blocker(s), {3} could not be checked, {4} degraded' -f
+                $v.Total, $v.Ok, $v.Blockers, $v.UnknownBlockers, $v.Degraded) -ForegroundColor White
+    if ($v.Blockers -gt 0) {
+        Write-Bad 'there are blockers - these steps cannot succeed until they are fixed.'
+        foreach ($b in $v.BlockerList) { Write-Host ('    - ' + $b.Area + ': ' + $b.Name) -ForegroundColor Red }
+    } elseif ($v.UnknownBlockers -gt 0) {
+        # Saying nothing here would let "I could not check it" read as "it is fine".
+        Write-Note ('nothing is known to be broken, but ' + $v.UnknownBlockers + ' requirement(s) could not be checked from here.')
+        foreach ($b in $v.UnknownList) { Write-Host ('    ? ' + $b.Area + ': ' + $b.Name + ' - ' + $b.Detail) -ForegroundColor Yellow }
+    } else {
+        Write-Good 'everything the run needs is in place.'
+    }
+    return $v
+}
+
+function Invoke-RequirementsFlow {
+    Write-Title 'Requirements'
+    Write-Explain "Two questions, not one. What is installed on this machine, and whether the run
+can actually succeed - the subscription, the roles each step needs, and the
+file server. All of it read-only."
+
+    if (-not (Test-Prerequisites -ForDeploy)) { return }
+
+    $withServer = Read-YesNo -Question 'Also check the file server?' -Why 'Opens one PowerShell session to it and reads its state. Nothing is changed.' -DefaultYes $true
+    [void](Show-AfsRequirements -IncludeServer:$withServer)
+}
+
 function Invoke-HowToUseFlow {
     <# The long-form guide. One self-contained page, so it opens from a file share, an
        air-gapped jump box or a customer laptop with nothing installed. #>
@@ -1598,7 +1676,7 @@ while ($true) {
             'See the assessment results - every tab, with the detail behind them',
             'Assess policy and governance across the tenant',
             'Remove an environment I built',
-            'Just check my prerequisites',
+            'Check requirements - this machine, Azure, and the file server',
             'Read the documentation',
             'Browse the blueprints, playbooks and runbooks',
             'Connect your on-premises servers (agent, DNS, AD join)',
@@ -1620,7 +1698,7 @@ while ($true) {
             4 { Invoke-AssessmentResultsFlow }
             5 { Invoke-GovernanceFlow }
             6 { Invoke-RemoveFlow }
-            7 { [void](Test-Prerequisites -ForDeploy) }
+            7 { Invoke-RequirementsFlow }
             8 { Invoke-DocsFlow }
             9 { Invoke-CodexFlow }
             10 { Invoke-OnPremisesFlow }

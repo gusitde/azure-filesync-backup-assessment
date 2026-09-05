@@ -337,7 +337,7 @@ $script:AfsStepTimes = New-Object System.Collections.ArrayList
 #  shipped zip read it from here. Bump it with every change and record the change in
 #  docs/VERSION-CONTROL.md - same scheme as the sibling Server-Ops product, deliberately.
 $script:AfsProductName    = 'Luca AZ Consulting Helper'
-$script:AfsProductVersion = 'V 2026.09.04.009'
+$script:AfsProductVersion = 'V 2026.09.04.010'
 $script:AfsProductAuthor  = 'Gustavo Assuncao'
 
 function Get-AfsProductInfo {
