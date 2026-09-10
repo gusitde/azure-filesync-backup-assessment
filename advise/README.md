@@ -7,7 +7,7 @@ codex library; they differ only in where the inputs come from.
 |---|---|---|
 | Use when | The customer will export their configuration | The customer will not, cannot, or has nothing to export yet |
 | Input | `afs-export-<stamp>.zip` from `Export-AzFileSyncEnvironment.ps1` | Answers to [DESIGN-INTERVIEW.md](DESIGN-INTERVIEW.md), gathered in a session |
-| Engine | `Assess-AzFileSyncExport.ps1`, ~80 rules | [REFERENCE-DESIGN.md](REFERENCE-DESIGN.md) defaults, applied by decision |
+| Engine | `Assess-AzFileSyncExport.ps1`, 94 rules | [REFERENCE-DESIGN.md](REFERENCE-DESIGN.md) defaults, applied by decision |
 | Output | `assessment.md` - findings against what exists | A target design, a build sequence, and a decision log |
 | Fails when | They say no | They say "just tell us what you would do" - which is what it is for |
 

@@ -52,7 +52,7 @@ finished, it is asserted.
 
 ```powershell
 python fixtures\make-fixture.py     # regenerate the synthetic export
-.\tests\run-tests.ps1               # 108 checks
+.\tests\run-tests.ps1               # 195 checks - it ends ALL GREEN when the kit is intact
 ```
 
 The fixture is entirely synthetic. Never commit a real export, or anything derived from one -

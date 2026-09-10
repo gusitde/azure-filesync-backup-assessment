@@ -189,11 +189,15 @@ visible failure this project can produce.
 
 ### D-10 - Name resolution
 **Default: Azure DNS Private Resolver inbound endpoint in the hub; Infoblox conditional
-forwarders for the `privatelink.*` zones only.**
+forwarders for the public service zones (`file.core.windows.net`, `afs.azure.net`), pointed
+at it.**
 
-Forward the specific `privatelink` zones, never the whole of `core.windows.net` - forwarding
-the parent zone sends public storage traffic through the resolver for no reason and breaks
-name resolution for accounts that have no private endpoint.
+Forward the public zone, not the `privatelink` one. A client asks for the public name, and a
+recursive resolver returns the whole chain - public name, `privatelink` alias, private
+address - in one answer, so a forwarder on a `privatelink` zone is never consulted. Forward
+the specific service zones rather than the whole of `core.windows.net`. Once forwarded, the
+resolver is a dependency of every name under that zone: prove it answers with a private
+address before the forwarder goes live, and keep the forwarder timeout short.
 
 Codex: `blueprint-azure-dns-for-private-endpoints`,
 `playbook-deploy-dns-private-resolver-and-forwarders`.

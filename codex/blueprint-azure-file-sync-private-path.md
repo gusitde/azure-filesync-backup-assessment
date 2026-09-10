@@ -11,7 +11,7 @@ tags: [azure-file-sync, private-endpoint, expressroute, dns, storage-sync-servic
 persona_run: eng-sysops
 ticket_kind: ops
 status: published
-version: 1
+version: 2
 execution: advisory
 last_verified: 2026-09-03T05:00 EST (UTC-4)
 artifacts: []
@@ -89,9 +89,10 @@ flowchart LR
    sync primary, sync secondary, monitoring) that land in `privatelink.afs.azure.net` through
    the DNS zone group. Register the four IPs in IPAM. Approve the connection if it lands in
    Pending.
-4. **DNS.** Infoblox conditional forwarder `privatelink.afs.azure.net` -> Private Resolver
-   inbound endpoint (the `privatelink.file.core.windows.net` forwarder already exists from the
-   storage blueprint). Verify from each server with the PowerShell in step 8 before any lock.
+4. **DNS.** Infoblox conditional forwarder for the public zone `afs.azure.net` -> Private
+   Resolver inbound endpoint (the `file.core.windows.net` forwarder already exists from the
+   storage blueprint). Not the `privatelink` zone: a forwarder on it is never consulted,
+   because the whole CNAME chain comes back in one answer. Verify from each server with the PowerShell in step 8 before any lock.
 5. **Managed identity (recommended, not a prerequisite for the private path).** Arc-enable the
    on-premises file servers (system-assigned identity), then `Set-AzStorageSyncServiceIdentity`
    grants Storage Account Contributor + Storage File Data Privileged Contributor to the service
@@ -141,7 +142,7 @@ flows remain public.
 | --- | --- | --- | --- |
 | Private endpoint `afs` (4 IPs) + DNS zone group | Bicep `avm/res/network/private-endpoint` 0.12.1 (groupIds `['afs']`) | `az deployment group create` | `Get-AzPrivateEndpoint` NIC shows four FQDN/IP pairs |
 | `privatelink.afs.azure.net` zone + links + 4 A records | zone blueprint + DNS zone group | same | `az network private-dns record-set a list -z privatelink.afs.azure.net` |
-| Infoblox forwarder for `privatelink.afs.azure.net` | Infoblox grid | Infoblox UI | `Resolve-DnsName` from a server returns 10.x for all four names |
+| Infoblox forwarder for the public zone `afs.azure.net` | Infoblox grid | Infoblox UI | `Resolve-DnsName` from a server returns 10.x for all four names |
 | Storage Sync Service `incomingTrafficPolicy` | `playbook-enable-file-sync-private-endpoint-and-cutover` | `Set-AzStorageSyncService` | `Get-AzStorageSyncService` shows AllowVirtualNetworksOnly |
 | Managed identity configuration | same playbook | `Set-AzStorageSyncServiceIdentity` | `Get-AzStorageSyncService` UseIdentity True; `Get-AzStorageSyncServer` ActiveAuthType ManagedIdentity |
 | Storage firewall (Deny + trusted services) | `playbook-harden-existing-storage-account` | `az storage account update -g <rg> -n <account> --default-action Deny --bypass AzureServices` | `az storage account show -n <account> -g <rg> --query networkRuleSet.bypass -o tsv` contains AzureServices |

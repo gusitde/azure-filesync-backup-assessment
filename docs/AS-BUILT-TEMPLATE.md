@@ -201,12 +201,13 @@ az dns-resolver inbound-endpoint show -g <rg> --dns-resolver-name <resolver> -n 
 **Screenshot `07-dns-resolver.png`:** DNS Private Resolver > Settings > Inbound endpoints.
 
 **On-premises forwarders configured:** record the DNS product, who made the change, and when.
-Forward the `privatelink` zones **only** - never the parent `core.windows.net`.
+Forward the **public** zones - a forwarder on a `privatelink` zone is never consulted, because
+the whole CNAME chain comes back in one answer.
 
 | Zone forwarded | Target IP | Changed by | Date |
 |---|---|---|---|
-| privatelink.file.core.windows.net | | | |
-| privatelink.afs.azure.net | | | |
+| file.core.windows.net | | | |
+| afs.azure.net | | | |
 
 **Proof it works** - run from an on-premises client, not from Azure:
 

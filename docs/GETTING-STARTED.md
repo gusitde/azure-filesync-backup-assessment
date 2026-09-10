@@ -20,7 +20,7 @@ for the assessment side; the deployment scripts are written for PowerShell and r
 | What you want to do | Access needed |
 |---|---|
 | Export and assess an existing estate | **Reader** on the subscriptions in scope |
-| Deploy a new environment | **Contributor** on the target subscription |
+| Deploy a new environment | Phase 1, once: **Owner** on the target subscription and **Application Administrator** in Entra ID. Phase 2 runs as the identity phase 1 creates |
 | Domain-join the storage account | Permission to create the identity object in the chosen OU |
 
 **One thing that catches people out.** Many tenants require the account to have signed in with
@@ -169,12 +169,15 @@ anyway. It contains resource names and settings, no file data and no credentials
 .\Get-AfsServerDiagnostics.ps1 -OutputPath C:\temp -SampleTieredFiles   # adds a tiered-file census
 ```
 
-Drop each resulting server zip into `servers\<hostname>\` inside the unzipped export.
+Drop each resulting server zip into `servers\<hostname>\` inside the export **folder**
+(unzip the export first if you only have the zip), and assess that folder, not the zip - the
+export zip never contains `servers\` ([issue #1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)).
 
 ### Step 3 - assess (no Azure access needed)
 
 ```powershell
-.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-20260903-090000.zip -CustomerName "Contoso"
+.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-20260903-090000.zip -CustomerName "Contoso"   # cloud side only
+.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-20260903-090000 -CustomerName "Contoso"       # the folder, with servers\ inside
 
 # if sync and backup traffic must stay on a private path, add this - it turns on the
 # ExpressRoute target-state rules and escalates the public-path findings
@@ -246,7 +249,8 @@ That adds a federated credential so GitHub Actions authenticates with OIDC - not
 nothing to rotate.
 
 **The administrator needs** Application Administrator or higher in Entra ID to create the
-identity, and Owner or User Access Administrator on the subscription to grant the role.
+identity, and Owner on the subscription - phase 1 creates the resource group as well as granting
+the role, and User Access Administrator alone cannot create it.
 
 ### Step 3 - phase 2, unattended
 
@@ -259,8 +263,10 @@ No prompts, no browser, no MFA - it signs in as the identity phase 1 created. Al
 what-if first; it executes the real preflight checks (CLI version, sign-in, subscription
 access, the dns-resolver extension, the five resource providers the build needs -
 `Microsoft.Storage`, `Microsoft.Network`, `Microsoft.StorageSync`,
-`Microsoft.RecoveryServices`, `Microsoft.Insights` - registering any that are not, and storage
-account name availability) and then shows every step without changing anything.
+`Microsoft.RecoveryServices`, `Microsoft.Insights` - and storage account name availability).
+Register any missing provider once, as the administrator, with `az provider register -n
+<namespace>`: the preflight tries, but the deployment identity is scoped to one resource group
+and registration needs the subscription ([issue #1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)). It and then shows every step without changing anything.
 
 The script is idempotent, so if something fails you fix the cause and run it again rather than
 starting over. When it finishes it prints a verification command for every object it created.
@@ -277,16 +283,19 @@ Resolve-DnsName <storageaccount>.file.core.windows.net
 Test-NetConnection <storageaccount>.file.core.windows.net -Port 445
 ```
 
-Only once that is right, set these two to `true` in the `overrides` section of your inputs
-file and re-run phase 2:
+Only once that is right, close the public paths. In this version the build does not do it for
+you - its lock-down step is not reachable from the inputs file ([issue #1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)) - so do
+it by hand:
 
-```jsonc
-"disableStoragePublicAccess": true,
-"restrictFileSyncToVirtualNetworksOnly": true
+```powershell
+az storage account update -g <rg> -n <account> --default-action Deny --bypass AzureServices
+Set-AzStorageSyncService -ResourceGroupName <rg> -Name <sss> -IncomingTrafficPolicy AllowVirtualNetworksOnly
 ```
 
-Closing the public path before the private endpoint resolves is the most common way to break
-sync, which is why it is not the default.
+The procedures, with their checks and rollback, are
+`codex/playbook-harden-existing-storage-account.md` and
+`codex/playbook-enable-file-sync-private-endpoint-and-cutover.md`. Closing the public path
+before the private endpoint resolves is the most common way to break sync.
 
 ### Step 5 - the three things that happen on your own machines
 
@@ -315,9 +324,9 @@ resolver, so the script refuses to write unless the resolver actually answers wi
 address. And the AD DS join needs the RSAT Active Directory module on the machine you run it
 from - installing that is the one step that needs local administrator, once.
 
-### What each of them still leaves to you
+### Doing them by hand instead
 
-These need a human on a specific machine.
+If you would rather not run the scripts, this is what each one does, so you can do it yourself.
 
 **Install and register the File Sync agent**, on the file server:
 
@@ -329,13 +338,17 @@ Register-AzStorageSyncServer -ResourceGroupName <rg> -StorageSyncServiceName <ss
 Then create the server endpoint pointing at the local path you want synced.
 
 **Point your on-premises DNS at the resolver.** The deployment printed the inbound endpoint IP.
-Create conditional forwarders for the `privatelink` zones only:
+Create conditional forwarders for the **public** zones, targeting that IP:
 
-- `privatelink.file.core.windows.net`
-- `privatelink.afs.azure.net`
+- `file.core.windows.net`
+- `afs.azure.net`
 
-Do **not** forward the parent `core.windows.net`. That sends every storage lookup through the
-resolver, including accounts with no private endpoint, and those then fail.
+Not the `privatelink` zones. A client asks for `<account>.file.core.windows.net`, and a
+recursive resolver returns the whole chain - public name, `privatelink` alias, private address -
+in one answer, so a forwarder on `privatelink.file.core.windows.net` is never consulted.
+Forwarding the public zone makes the resolver a dependency of every name under it, so first
+prove it answers with a private address, and keep the forwarder timeout short (the script uses
+3 seconds).
 
 **Domain-join the storage account**, from a domain-joined machine with AzFilesHybrid:
 
@@ -404,7 +417,7 @@ line are masked before they reach the log.
 | `Connect-AzAccount -AccessToken` connects but calls return 401 | A raw token context cannot service most Az cmdlets | Use an interactive `Connect-AzAccount`, or a service principal |
 | `ResourceGroupNotFound` in the middle of a build that was finding everything a minute ago | The Azure CLI keeps its default subscription in a profile shared by every window; an `az login` or `az account set` elsewhere retargeted the next call | Nothing - every call is now pinned with `--subscription`. Still, do not sign in from a second window during a build |
 | `-o was unexpected at this time.` (exit code 255, and a `-AllowFailure` read silently returns nothing) | On Windows `az` is a batch file, and a `)` inside an argument closes one of its `if (...)` blocks early. Any `--query` with a function call - `length(@)`, `contains(...)`, `join(...)` - trips it; filters like `[?name=='x']` are fine | Query for a plain list (`[].name`) and count or filter in PowerShell. From Git Bash or Linux the same command works, which is why it hides in testing |
-| `MissingSubscriptionRegistration ... namespace 'Microsoft.StorageSync'` | The subscription has never used that service | `az provider register -n <namespace>`; preflight now does this for the five providers the build needs |
+| `MissingSubscriptionRegistration ... namespace 'Microsoft.StorageSync'` | The subscription has never used that service | `az provider register -n <namespace>`, once, as an administrator - the preflight tries, but its identity is scoped to one resource group |
 | The private endpoint exists but the name still resolves to a public address | `dns-zone-group show` answered `{}` with exit 0, so no A records were written | Re-run phase 2 - it now attaches the zone group when no zone config exists; verify with `az network private-dns record-set a list` |
 | `az backup vault delete` fails after protection was removed | Soft delete keeps the deleted backup data (14 days by default, irreversible where a policy sets `AlwaysON`) | Wait out the retention; the teardown removes everything else and prints the date |
 
@@ -414,7 +427,7 @@ line are masked before they reach the log.
 
 | Path | What it is |
 |---|---|
-| `start.ps1` | The guided front door: build, assess, remove, prerequisites, docs, codex, resume a build, open reports |
+| `start.ps1` | The guided front door - 14 options: the guide, settings, build, assess, results, governance, remove, requirements, docs, codex, connect your servers, resume a build, reports |
 | `Export-AzFileSyncEnvironment.ps1` | Read-only export of the cloud side |
 | `Get-AfsServerDiagnostics.ps1` | Per-server diagnostic bundle |
 | `Assess-AzFileSyncExport.ps1` | Turns an export into `assessment.md`, `findings.json` and the tabbed `assessment.html` |

@@ -717,7 +717,7 @@ foreach ($v in $script:Verifications) {
 
 Write-Host ''
 Write-Host 'Three steps remain, each on a machine of yours rather than in Azure.' -ForegroundColor White
-Write-Host 'There is a script for each, under onprem\ - or use option 7 in start.ps1:'
+Write-Host 'There is a script for each, under onprem\ - or use option 11 in start.ps1:'
 Write-Host ''
 Write-Host '  1. Install the Azure File Sync agent, register the server, and sync a folder:'
 Write-Host ("     .\onprem\Install-AfsServerEndpoint.ps1 -Context " + $Context + " -FileServer <server> -SharePath '<share>=<path>'")

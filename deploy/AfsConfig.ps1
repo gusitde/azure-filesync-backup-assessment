@@ -79,7 +79,7 @@ function Get-AzureFailureAdvice {
     if ($m -match 'Authorization/roleAssignments/write') {
         return [pscustomobject]@{
             Cause = 'This account cannot grant roles at that scope.'
-            Why   = 'Creating the deployment identity needs Owner or User Access Administrator on the subscription. If you are an Entra Global Administrator with no Azure role, you have rights over the directory but none over Azure resources - they are separate, and this is the usual cause.'
+            Why   = 'Phase 1 needs Owner on the subscription - it creates the resource group as well as granting the role, and User Access Administrator alone cannot create the group. If you are an Entra Global Administrator with no Azure role, you have rights over the directory but none over Azure resources - they are separate, and this is the usual cause.'
             Fix   = @(
                 '# if you are a Global Administrator, elevate once:',
                 'az rest --method post --url "https://management.azure.com/providers/Microsoft.Authorization/elevateAccess?api-version=2016-07-01"',

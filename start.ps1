@@ -279,7 +279,7 @@ az dns-resolver command fails as an unrecognised command group."
     # gap is reported rather than fatal - but it is reported HERE, where it costs nothing to
     # fix, instead of halfway through a change to a domain controller.
     Write-Host ''
-    Write-Host '  For the on-premises steps (option 7):' -ForegroundColor DarkGray
+    Write-Host '  For the on-premises steps (option 11):' -ForegroundColor DarkGray
 
     foreach ($m in @('Az.Accounts', 'Az.Storage', 'Az.StorageSync')) {
         if (Get-Module -ListAvailable -Name $m) {
@@ -736,7 +736,7 @@ function Invoke-GovernanceFlow {
        governed well". A separate tool answers that, so this runs it rather than reinventing
        it, and feeds it the subscription and tenant from the deployment. #>
     Write-Title 'Policy and governance across the tenant'
-    Write-Explain "The assessment in option 2 looks at File Sync and Backup. This one looks at
+    Write-Explain "The assessment in option 4 looks at File Sync and Backup. This one looks at
 everything around them - policy assignments, RBAC, management group structure,
 locks, Defender coverage - using the Azure Governance Visualizer.
 
@@ -775,7 +775,7 @@ function Invoke-OnPremisesFlow {
 one changes a machine of yours - a file server, a DNS server, Active
 Directory - so each asks before it does anything."
         if (-not (Test-Path $script:ContextFile)) {
-            Write-Bad 'no deployment context found - build the Azure side first (option 1).'
+            Write-Bad 'no deployment context found - build the Azure side first (option 3).'
             return
         }
         $c = Read-Choice -Question 'Which one?' -Options @(
@@ -1099,7 +1099,7 @@ function Invoke-ReportsFlow {
         Write-Title 'Reports'
         $reports = Get-AfsReports
         if ($reports.Count -eq 0) {
-            Write-Note 'no reports yet. Run an assessment (option 2) or a build (option 1) first.'
+            Write-Note 'no reports yet. Run an assessment (option 4) or a build (option 3) first.'
             return
         }
         $labels = @()
@@ -1218,10 +1218,10 @@ Administrator on this subscription."
     Set-WizardStage 7 'built'
     Complete-AfsProgress -Activity 'Azure File Sync wizard' -Id 1
     Write-Title 'Done'
-    Write-Explain "Three things still need a human, on a specific machine:
+    Write-Explain "Three steps remain, each on a machine of yours - option 11 runs them, dry run first:
   1. install the Azure File Sync agent on the file server and register it
-  2. point your on-premises DNS at the resolver IP shown above, for the
-     privatelink zones only
+  2. point your on-premises DNS at the resolver IP shown above - forward the
+     PUBLIC zones file.core.windows.net and afs.azure.net, not the privatelink ones
   3. domain-join the storage account, from a domain-joined machine
 
 docs/AS-BUILT-TEMPLATE.md tells you what to capture as evidence."
@@ -1535,7 +1535,7 @@ ones that cannot be undone. It opens in your browser and needs no network."
     $tabs = @(
         @{ id = 'start';     n = 'Start here';           d = 'What the kit is, the two doors, and every menu option.' },
         @{ id = 'settings';  n = 'Deployment settings';  d = 'The four inputs, what is derived from them, and what cannot be changed later.' },
-        @{ id = 'build';     n = 'Build';                d = 'The two phases, the 17 steps, and what the as-built records.' },
+        @{ id = 'build';     n = 'Build';                d = 'The two phases, the 15 steps, and what the as-built records.' },
         @{ id = 'connect';   n = 'Connect your servers'; d = 'Agent and endpoint, DNS forwarders, AD DS join - the three steps that touch your machines.' },
         @{ id = 'protect';   n = 'Backup and restore';   d = 'What to protect, which tier restores one file, and how to prove it.' },
         @{ id = 'assess';    n = 'Assess';               d = 'Export read-only, assess offline, and what comes out.' },

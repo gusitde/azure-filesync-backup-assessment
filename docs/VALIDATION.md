@@ -4,20 +4,26 @@ What in this repository has been executed, what has only been checked against do
 and what could not be tested. The distinction matters: a command verified on paper can still
 be wrong for a given CLI version, region or resource state.
 
-Last run: 2026-09-03. Azure CLI 2.84.0, Windows PowerShell 5.1, a live Azure tenant.
+First run: 2026-09-03 (structural and read-only validation). Live build and on-premises runs:
+2026-09-03 to 2026-09-04. Counts re-measured 2026-09-10 at `V 2026.09.10.001`. Azure CLI 2.84.0,
+Windows PowerShell 5.1, a live Azure tenant, and an on-premises lab with a Windows Server 2022
+file server and Active Directory.
 
 ## Summary
 
 | Layer | Method | Result |
 |---|---|---|
-| Every `az` command in the codex | Command path and every flag resolved against the installed CLI | **89 / 89 valid** |
+| Every `az` command in the codex (20 entries, 2026-09-03) | Command path and every flag resolved against the installed CLI | **89 / 89 valid** |
 | Read-only gate and verify commands | Executed against live Azure resources | **33 / 36 pass** (see below) |
 | Exporter ARM API versions and resource paths | Live GET/POST against ARM | **23 / 23 return 200** |
-| Assessor rules and report generation | Synthetic fixture, offline | **108 / 108 checks green** |
-| Deployment and teardown scripts | Parsed, and run end to end in `-WhatIf` against a live subscription | **pass** |
-| Mutating `az` commands | **Not executed** | see limitations |
-| Every PowerShell cmdlet and parameter in the codex | Resolved against the real modules | **48 cmdlets, 111 parameter references, 0 invalid** |
-| On-server File Sync cmdlets | **Not executed** | needs a registered server |
+| Assessor rules, report generation, wizard wiring | Synthetic fixture, offline (`tests\run-tests.ps1`) | **195 / 195 checks green** |
+| Codex format (25 entries) | `codex\import-to-luca.mjs --dry-run` against the strict validator | **25 / 25 would seed, 0 errors** |
+| Deployment and teardown scripts | Run in `-WhatIf`, then for real in a lab subscription | **pass** - built end to end, re-run idempotent, torn down |
+| Mutating commands the build, teardown and on-premises scripts use | Executed in the lab | **pass**, after the fixes in items 6 to 12 below |
+| Mutating commands elsewhere in the codex (Azure Migrate, VM backup, key rotation, lock-down) | **Not executed in this record** | see limitations |
+| Every PowerShell cmdlet and parameter in the codex (20 entries, 2026-09-03) | Resolved against the real modules | **48 cmdlets, 111 parameter references, 0 invalid** |
+| On-server File Sync | Agent install, registration, endpoints, sync up, and an item-level restore synced back down | **pass**, on a Windows Server 2022 lab server |
+| AD DS join | `onprem\Join-AfsStorageAccountToAdDs.ps1` against a lab domain | **pass**; `Debug-AzStorageAccountAuth` checks pass |
 
 ## What execution found that documentation review did not
 
@@ -116,47 +122,80 @@ Two were defects in the test, not the library, and are recorded rather than hidd
   read succeeds through `az rest` against the Authorization API, so it is a CLI-layer quirk in
   this environment rather than a permissions problem or a defect in the command.
 
-## Limitations - what could not be validated here, and why
+## Live execution (2026-09-03 to 2026-09-04)
 
-**Mutating commands were not executed.** The tenant available for testing requires MFA for
-every write: any create, update or delete returns
+Once the MFA blocker below was cleared - one interactive, MFA-completed sign-in for phase 1, then
+everything else as the deployment identity - the kit ran for real:
+
+| What | Where | Result |
+|---|---|---|
+| Phase 1: resource group, Entra identity, Contributor on the group, context file, read-back as the identity | lab subscription | pass |
+| Phase 2: storage account and two shares, both private endpoints, both private DNS zones with A records, Storage Sync Service, DNS Private Resolver, geo-redundant vault with cross-region restore, 60-day policy, both shares protected | lab subscription | pass; a second run skipped what already existed |
+| On-demand backup of a share | lab vault | job completed |
+| File Sync agent installed over PowerShell remoting, server registered, sync group and endpoints created | Windows Server 2022 lab server | pass; files synced up |
+| AD DS join of the storage account | lab domain | joined as a computer object; `Debug-AzStorageAccountAuth` checks pass; a second run reports already joined |
+| Item-level restore of a folder to another location, then forced change detection | lab vault and server | restore completed in 78 s; the folder synced back down to the server |
+| Requirements check | lab estate | 41 checks; one real blocker found (a missing OU) |
+| Teardown | lab subscription, with vault soft delete kept always on by policy | everything else removed; the date to retry the vault printed |
+
+Items 6 to 12 above were found by these runs. The item-level restore used
+`Restore-AzRecoveryServicesBackupItem` from Az.RecoveryServices. The Azure CLI offers the same as
+`az backup restore restore-azurefiles` (`--source-file-type`, `--source-file-path`); that command
+is resolved against the CLI but not executed in this record.
+
+## Limitations - what has not been validated, and why
+
+**The original blocker, kept for the record.** The tenant first available for testing required
+MFA for every write: any create, update or delete returned
 
 ```
 RequestDisallowedByAzure: ... tried to create, update or delete Azure resources without
 authenticating through MFA.
 ```
 
-No resource could be created, so `storage account create`, `private-endpoint create`,
-`backup vault create` and the rest are documentation-verified and shape-verified only. To
-close this, run the deployment script against a subscription with an MFA-authenticated
-session or a service principal holding Contributor.
+It was cleared by an administrator holding Owner on the lab subscription signing in once with
+MFA - which is why the deployment has two phases: the administrator completes MFA once, in
+phase 1, and phase 2 runs as the identity phase 1 creates, which the user MFA policy does not
+apply to.
 
-**PowerShell cmdlets are now fully resolved.** `Az.Accounts`, `Az.Resources`, `Az.Storage`,
+**Still not executed in this record:**
+
+- The build's lock-down step, which is not reachable from the inputs file in this version
+  ([issue #1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)).
+- The DNS forwarder write against a live private path. At the time of the
+  lab runs the resolver was not reachable from on-premises, and `Set-AfsDnsForwarders.ps1`
+  refused to write, as designed, because the resolver did not answer with a private address.
+- ExpressRoute routing - there is no circuit in the lab.
+- The Azure Migrate, migrated-VM backup and key-rotation procedures in the codex. Their commands
+  and parameters resolve against the real CLI and modules; they have not been run.
+- `Debug-StorageSyncServer` and `Invoke-StorageSyncFileRecall`, which install with the File Sync
+  agent, are not claimed as executed here.
+
+**PowerShell cmdlets are fully resolved.** `Az.Accounts`, `Az.Resources`, `Az.Storage`,
 `Az.StorageSync` 2.6.0, `Az.RecoveryServices` 7.14.1, `Az.Network` 8.2.0, `Az.PrivateDns` 1.3.0,
-`Az.DnsResolver` 2.0.0 and `Az.Compute` 11.9.0 were installed and every cmdlet the codex names
-was resolved with `Get-Command`, then every `-Parameter` it passes was checked against that
-cmdlet's real parameter set including aliases. **48 cmdlets, 111 parameter references, zero
-invalid.** Five cmdlets remain unresolvable here because they do not ship in a PowerShell
-Gallery module: `Debug-StorageSyncServer` and `Invoke-StorageSyncFileRecall` install with the
-Azure File Sync agent on a registered server; `Join-AzStorageAccount` and
-`Debug-AzStorageAccountAuth` come from AzFilesHybrid, which Microsoft distributes from GitHub;
-`Get-ADComputer` needs RSAT.
-
-**On-server File Sync commands need a registered server.** `Debug-StorageSyncServer`,
-`Get-StorageSyncAgentVersion` and the Telemetry event-log checks require a Windows server
-running the agent and registered to a Storage Sync Service.
+`Az.DnsResolver` 2.0.0 and `Az.Compute` 11.9.0 were installed and every cmdlet the codex named on
+2026-09-03 was resolved with `Get-Command`, then every `-Parameter` it passes was checked against
+that cmdlet's real parameter set including aliases. **48 cmdlets, 111 parameter references, zero
+invalid.** Five cmdlets could not be resolved on the validation machine because they do not ship
+in a PowerShell Gallery module: `Debug-StorageSyncServer` and `Invoke-StorageSyncFileRecall`
+install with the Azure File Sync agent on a registered server; `Join-AzStorageAccount` and
+`Debug-AzStorageAccountAuth` come from AzFilesHybrid, which Microsoft distributes from GitHub -
+those two have since run against a real domain; `Get-ADComputer` needs RSAT.
 
 ## Reproducing this
 
 ```powershell
-# structural validation of every az command in the codex
-python scripts\validate-az.py          # if published; otherwise see docs/VALIDATION.md history
-
-# the offline suite
+# the offline suite - expect ALL GREEN (195 checks)
 python fixtures\make-fixture.py
 .\tests\run-tests.ps1
 
+# the codex format, against a Luca checkout's validator - expect 25/25 would seed, 0 errors
+node codex\import-to-luca.mjs --luca-root <path-to-Luca-express-prod> --dry-run
+
 # the deployment script, without changing anything
 cd deploy
-.\Deploy-AfsEnvironment.ps1 -ParameterFile .\parameters.json -WhatIf
+.\Deploy-AfsEnvironment.ps1 -InputFile .\inputs.json -WhatIf
 ```
+
+The structural validator that resolved every `az` command was a one-off script and is not
+published; its method is described in the summary above.

@@ -11,7 +11,7 @@ tags: [dns, private-resolver, private-endpoint, conditional-forwarder, infoblox,
 persona_run: eng-netops
 ticket_kind: ops
 status: published
-version: 2
+version: 3
 execution: advisory
 last_verified: 2026-09-03T06:00 EST (UTC-4)
 artifacts: []
@@ -32,15 +32,16 @@ zones and Azure-native names.
 
 **On-premises custom DNS reaches Azure Private DNS through the Private Resolver INBOUND
 endpoint.** Contoso resolvers keep answering everything they answer today; they gain
-conditional forwarders for the `privatelink.*` zones only, pointed at one static IP in the hub
-VNet. Nothing is deployed inside Azure to serve DNS to Contoso except the managed resolver
+conditional forwarders for the public service zones (`file.core.windows.net`, `afs.azure.net`
+and the rest - step 3 below explains why not the `privatelink` ones), pointed at one static IP
+in the hub VNet. Nothing is deployed inside Azure to serve DNS to Contoso except the managed resolver
 itself - **no DNS appliance runs in Azure** (Contoso decision, 2026-09-02: no Infoblox vNIOS or
 equivalent in the Azure environment). The two endpoints are not interchangeable, and each
 serves exactly one direction:
 
 | Endpoint | Direction | Who queries it | What it answers | Configured by |
 | --- | --- | --- | --- | --- |
-| **Inbound endpoint** (static IP in a delegated /28) | **on-premises -> Azure** | Contoso DNS servers, through conditional forwarders | the linked private DNS zones - `privatelink.file.core.windows.net` and the rest - so a share, a Storage Sync Service or a Migrate name returns its private IP | one conditional forwarder per privatelink zone on Contoso DNS, target = the inbound IP |
+| **Inbound endpoint** (static IP in a delegated /28) | **on-premises -> Azure** | Contoso DNS servers, through conditional forwarders | the linked private DNS zones - `privatelink.file.core.windows.net` and the rest - so a share, a Storage Sync Service or a Migrate name returns its private IP | one conditional forwarder per public service zone on Contoso DNS (`file.core.windows.net`, not `privatelink.file.core.windows.net`), target = the inbound IP |
 | **Outbound endpoint + forwarding ruleset** | **Azure -> on-premises** | Azure DNS (168.63.129.16), on behalf of the VNets linked to the ruleset | `contoso.local` and Contoso reverse zones, resolved by Contoso DNS servers themselves | a ruleset rule `contoso.local.` whose targets are Contoso DNS server IPs |
 
 If only on-premises clients must resolve Azure private names, the inbound endpoint alone is

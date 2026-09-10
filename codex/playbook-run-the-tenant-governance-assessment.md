@@ -11,7 +11,7 @@ tags: [governance, azure-policy, rbac, management-group, azgovviz, assessment, c
 persona_run: eng-sysops
 ticket_kind: ops
 status: published
-version: 1
+version: 2
 execution: assisted
 last_verified: 2026-09-04T05:15 EST (UTC-4)
 artifacts: []
@@ -42,7 +42,7 @@ different question - and a mature tool already answers it.
 ## Procedure
 
 1. **Two reports, two questions.** Keep them separate and read them together. `assessment.html`
-   judges the File Sync and Backup estate against ~80 rules. The governance report judges the
+   judges the File Sync and Backup estate against 94 rules. The governance report judges the
    tenant. Neither subsumes the other, and merging them would blur which finding an owner has
    to act on.
 2. **PowerShell 7 is required, and this kit runs on 5.1.** That is not an oversight: the AD DS

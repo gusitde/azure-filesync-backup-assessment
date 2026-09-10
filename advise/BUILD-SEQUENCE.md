@@ -31,12 +31,13 @@ Nothing in phase 2 or later is reversible cheaply if these are still open.
 | 1.1 Confirm hub-and-spoke and gateway transit | - | Spoke-to-hub route present; ER gateway reachable |
 | 1.2 Deploy DNS Private Resolver inbound endpoint in the hub | `playbook-deploy-dns-private-resolver-and-forwarders` | Inbound endpoint has a private IP in the delegated subnet |
 | 1.3 Create the `privatelink` zones and link them to the VNets | same | Zone list matches the design; one zone per name, centrally owned |
-| 1.4 Infoblox conditional forwarders for the `privatelink` zones only | same | From on-premises, a test name resolves to the resolver, not to public |
+| 1.4 Infoblox conditional forwarders for the public zones (`file.core.windows.net`, `afs.azure.net`), not the `privatelink` ones | same | From on-premises, the public name of a test account resolves to its private IP through the resolver |
 | 1.5 NSG and UDR review for the private endpoint subnets | `blueprint-azure-files-private-endpoint` | No rule blocks 445 or the endpoint subnet |
 
-**Gate 1.** From an on-premises client, a `privatelink` name resolves to a private IP.
-Forwarding the parent `core.windows.net` zone instead of the specific `privatelink` zones is
-the common defect here and it breaks every storage account that has no private endpoint.
+**Gate 1.** From an on-premises client, `<account>.file.core.windows.net` resolves through the
+`privatelink` alias to a private IP. A forwarder on the `privatelink` zone instead of the
+public one is the common defect here: it is created, looks right, and is never consulted,
+because the whole CNAME chain comes back in one answer.
 
 ---
 

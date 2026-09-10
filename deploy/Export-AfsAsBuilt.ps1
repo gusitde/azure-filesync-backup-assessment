@@ -214,10 +214,10 @@ if ($inbound) {
     $ip = $inbound.ipConfigurations[0].privateIpAddress
     L ("Resolver ``{0}``, inbound endpoint ``inbound-01`` at **{1}**." -f $cfg.dnsResolverName, $ip)
     L ''
-    L 'Point on-premises conditional forwarders at that address for these zones only - never the parent core.windows.net:'
+    L 'Point on-premises conditional forwarders at that address for the PUBLIC zones - a forwarder on a privatelink zone is never consulted, because the whole CNAME chain comes back in one answer:'
     L ''
-    L "- ``$($cfg.zoneFile)``"
-    L "- ``$($cfg.zoneAfs)``"
+    L "- ``$($cfg.zoneFile -replace '^privatelink\.', '')``"
+    L "- ``$($cfg.zoneAfs -replace '^privatelink\.', '')``"
     L ''
     V 'resolver inbound IP' "az dns-resolver inbound-endpoint show -g $rg --dns-resolver-name $($cfg.dnsResolverName) -n inbound-01 --query 'ipConfigurations[0].privateIpAddress' -o tsv"
 } else { L '_No DNS Private Resolver in this deployment._'; L '' }
@@ -564,7 +564,7 @@ L ''
 L '## Still manual'
 L ''
 L 'Three steps happen on a machine of yours rather than in Azure. Each has a script under'
-L '`onprem/`, and each is offered by option 7 of `start.ps1`. Record who ran it and when:'
+L '`onprem/`, and each is offered by option 11 of `start.ps1`. Record who ran it and when:'
 L ''
 L '| Step | Where | Script | Status | Done by | Date |'
 L '|---|---|---|---|---|---|'

@@ -49,7 +49,8 @@
 .NOTES
   Permissions the administrator needs:
     - Application Administrator or Global Administrator in Entra ID, to create the identity.
-    - Owner or User Access Administrator on the subscription, to grant the role.
+    - Owner on the subscription, to create the resource group and grant the role
+      (User Access Administrator alone cannot create the group).
   Nothing else in this kit needs privilege that high. The deployment identity it creates is
   scoped to a single resource group.
 #>

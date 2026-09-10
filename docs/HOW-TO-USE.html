@@ -93,7 +93,7 @@ svg text{font-family:"Segoe UI",system-ui,sans-serif}
   <h3>The shape of the thing</h3>
   <p>The kit answers two different questions, and it is worth knowing which one you are asking before you start.</p>
   <div class="cards">
-    <div class="card"><h5>Assess</h5><p>An estate already exists. Export it read-only, and get findings against roughly eighty rules. Needs nothing but Reader.</p></div>
+    <div class="card"><h5>Assess</h5><p>An estate already exists. Export it read-only, and get findings against 94 rules. Needs nothing but Reader.</p></div>
     <div class="card"><h5>Build</h5><p>Nothing exists, or the customer will not share what does. Build the target design from four inputs, then connect real servers to it.</p></div>
   </div>
   <p>Both converge on <code>codex/</code> - the blueprints that describe the target state, the playbooks that build it, and the runbooks for when it breaks.</p>
@@ -133,17 +133,20 @@ svg text{font-family:"Segoe UI",system-ui,sans-serif}
   <h3>The menu</h3>
   <table>
     <tr><th style="width:38px">#</th><th>Option</th><th>Use it when</th></tr>
-    <tr><td>1</td><td>Deployment settings</td><td>Before your first build, and any time a name, range or retention needs to change.</td></tr>
-    <tr><td>2</td><td>Build</td><td>Create the environment. Runs a dry run first, every time.</td></tr>
-    <tr><td>3</td><td>Assess an existing environment</td><td>You have an export zip and want findings.</td></tr>
-    <tr><td>4</td><td>Assess policy and governance</td><td>The question moved from this estate to the tenant around it.</td></tr>
-    <tr><td>5</td><td>Remove an environment</td><td>Tear down what you built. Refuses if the group holds anything it does not recognise.</td></tr>
-    <tr><td>6</td><td>Check prerequisites</td><td>First run on a new machine, or something behaved oddly.</td></tr>
-    <tr><td>7</td><td>Read the documentation</td><td>This guide and the written docs.</td></tr>
-    <tr><td>8</td><td>Blueprints, playbooks and runbooks</td><td>The reasoning behind the design, and the repair procedures.</td></tr>
-    <tr><td>9</td><td>Connect your on-premises servers</td><td>The three steps that touch machines you own.</td></tr>
-    <tr><td>10</td><td>Resume the last build</td><td>A build stopped part way. Idempotent, so it continues rather than restarting.</td></tr>
-    <tr><td>11</td><td>Open the reports</td><td>Findings, as-built documents, governance output.</td></tr>
+    <tr><td>1</td><td>How to use it</td><td>Opens this guide at the tab you pick.</td></tr>
+    <tr><td>2</td><td>Deployment settings</td><td>Before your first build, and any time a name, range or retention needs to change.</td></tr>
+    <tr><td>3</td><td>Build</td><td>Create the environment. Runs a dry run first, every time.</td></tr>
+    <tr><td>4</td><td>Assess an existing environment</td><td>You have an export zip, or can take one, and want findings.</td></tr>
+    <tr><td>5</td><td>See the assessment results</td><td>Open any tab of a report, or read the severity counts and top findings in the terminal.</td></tr>
+    <tr><td>6</td><td>Assess policy and governance</td><td>The question moved from this estate to the tenant around it.</td></tr>
+    <tr><td>7</td><td>Remove an environment</td><td>Tear down what you built. Refuses if the group holds anything it does not recognise.</td></tr>
+    <tr><td>8</td><td>Check requirements</td><td>First run on a new machine, before a build or a server step, or when something behaved oddly. This machine, Azure, DNS, AD DS and the file server.</td></tr>
+    <tr><td>9</td><td>Read the documentation</td><td>This guide and the written docs.</td></tr>
+    <tr><td>10</td><td>Blueprints, playbooks and runbooks</td><td>The reasoning behind the design, and the repair procedures.</td></tr>
+    <tr><td>11</td><td>Connect your on-premises servers</td><td>The three steps that touch machines you own.</td></tr>
+    <tr><td>12</td><td>Resume the last build</td><td>A build stopped part way. Idempotent, so it continues rather than restarting.</td></tr>
+    <tr><td>13</td><td>Open the reports</td><td>Findings, as-built documents, governance output.</td></tr>
+    <tr><td>14</td><td>Quit</td><td>Ends the session and closes the run log.</td></tr>
   </table>
 
   <div class="note good"><span class="lbl">The habit worth keeping</span>Every destructive or outward-facing step runs a dry run first and asks before the real one. If a script ever changes something without telling you, that is a bug - report it.</div>
@@ -220,7 +223,7 @@ dnspr-contoso-eastus       the DNS Private Resolver</code></pre>
       <rect class="a" x="608" y="52" width="256" height="104" rx="8"/>
       <text class="t" x="736" y="80" text-anchor="middle">Phase 2 - unattended</text>
       <text class="s" x="736" y="102" text-anchor="middle">signs in as that identity</text>
-      <text class="s" x="736" y="120" text-anchor="middle">builds 17 idempotent steps</text>
+      <text class="s" x="736" y="120" text-anchor="middle">builds 15 idempotent steps</text>
       <text class="s" x="736" y="138" text-anchor="middle">writes the as-built</text>
 
       <path class="l" d="M244 104 L 322 104" marker-end="url(#ah2)"/><text class="ll" x="252" y="96">writes</text>
@@ -232,7 +235,7 @@ dnspr-contoso-eastus       the DNS Private Resolver</code></pre>
 
   <h3>What phase 2 does, in order</h3>
   <ol class="steps">
-    <li><strong>Preflight.</strong> CLI version, sign-in, subscription access, the <code>dns-resolver</code> extension, and the five resource providers the build needs - registering any that are not. A subscription that has never used a service has its provider switched off, and the first create fails with a message about namespaces that mentions nothing you did.</li>
+    <li><strong>Preflight.</strong> CLI version, sign-in, subscription access, the <code>dns-resolver</code> extension, and the five resource providers the build needs - register any that are missing once, as the administrator, because the deployment identity cannot. A subscription that has never used a service has its provider switched off, and the first create fails with a message about namespaces that mentions nothing you did.</li>
     <li><strong>Resource group, storage account, soft delete, shares.</strong> Share soft delete is set to 14 days before any data exists, because it cannot protect what was deleted before it was turned on.</li>
     <li><strong>Network.</strong> Virtual network, the private endpoint subnet, both privatelink DNS zones, and a link from each zone to the network.</li>
     <li><strong>Private endpoints.</strong> One for the storage account, one for the sync service, each with a DNS zone group that writes the address records. The sync service publishes <em>four</em> names, not one.</li>
@@ -394,7 +397,7 @@ dnspr-contoso-eastus       the DNS Private Resolver</code></pre>
   <h2>Policy and governance</h2>
   <p class="lead">A different question, with a mature answer already written. This wraps it rather than reinventing it.</p>
 
-  <p>The assessor judges <em>this estate</em>. It says nothing about the tenant around it - policy assignments, who can do what, management group shape, locks, Defender coverage. Option 4 runs the Azure Governance Visualizer against the subscription and tenant from your deployment, and puts its report next to the others.</p>
+  <p>The assessor judges <em>this estate</em>. It says nothing about the tenant around it - policy assignments, who can do what, management group shape, locks, Defender coverage. Option 6 runs the Azure Governance Visualizer against the subscription and tenant from your deployment, and puts its report next to the others.</p>
 
   <pre><code>.\Invoke-AfsGovernanceAssessment.ps1 -Context .\deploy\deployment-context.json</code></pre>
 
@@ -448,7 +451,7 @@ dnspr-contoso-eastus       the DNS Private Resolver</code></pre>
     <tr><td><code>RequestDisallowedByAzure ... without authenticating through MFA</code></td><td>The session signed in without multi-factor. Reads work, writes do not.</td><td><code>az logout</code>, then <code>az login</code> and complete the prompt. More roles will not help.</td></tr>
     <tr><td><code>AuthorizationFailed</code> creating a cloud endpoint</td><td>Contributor cannot create role assignments, and a cloud endpoint creates one.</td><td>Sign in as Owner, User Access Administrator, or Azure File Sync Administrator on the storage account.</td></tr>
     <tr><td><code>-o was unexpected at this time.</code></td><td>On Windows <code>az</code> is a batch file, and a closing bracket inside an argument ends one of its blocks early. Any query with a function call trips it.</td><td>Query plainly and filter afterwards. The kit calls the bundled Python directly to sidestep it.</td></tr>
-    <tr><td><code>MissingSubscriptionRegistration</code></td><td>The subscription has never used that service.</td><td>Preflight registers the five providers the build needs. By hand: <code>az provider register -n &lt;namespace&gt;</code>.</td></tr>
+    <tr><td><code>MissingSubscriptionRegistration</code></td><td>The subscription has never used that service.</td><td>Register it once as an administrator: <code>az provider register -n &lt;namespace&gt;</code>. The preflight tries, but its identity is scoped to one resource group and registration needs the subscription.</td></tr>
     <tr><td>The endpoint exists but the name still resolves publicly</td><td>The DNS zone group check passed on an empty answer, so no address records were written.</td><td>Re-run the build; verify with <code>az network private-dns record-set a list</code>.</td></tr>
     <tr><td><code>ScopeLocked</code> deleting the storage account</td><td>A lock lives on the resource, not the group. Deleting it by name at group scope reports success and removes nothing.</td><td>Delete locks by id, and verify afterwards rather than trusting the message.</td></tr>
     <tr><td><code>InUseSubnetCannotBeDeleted</code></td><td>Children before parents: the network is held by an interface, which is held by its private endpoint.</td><td>The teardown now orders deletes and loops until a pass removes nothing.</td></tr>
@@ -491,11 +494,11 @@ dnspr-contoso-eastus       the DNS Private Resolver</code></pre>
   <table>
     <tr><th>For</th><th>You need</th></tr>
     <tr><td>Assessing</td><td><code>Az.Accounts</code>, and Reader on the subscriptions.</td></tr>
-    <tr><td>Building</td><td>Azure CLI, the <code>dns-resolver</code> extension, and Contributor on the subscription.</td></tr>
+    <tr><td>Building</td><td>Azure CLI, the <code>dns-resolver</code> extension, and - once, for phase 1 - Owner on the subscription and Application Administrator in Entra ID.</td></tr>
     <tr><td>Connecting servers</td><td><code>Az.Storage</code>, <code>Az.StorageSync</code>, remoting to the file server, and RSAT Active Directory for the join.</td></tr>
     <tr><td>Governance</td><td>PowerShell 7, and Reader at the management group.</td></tr>
   </table>
-  <p>Option 6 checks all of it and tells you the exact command for anything missing.</p>
+  <p>Option 8 checks all of it and tells you the exact command for anything missing.</p>
 
   <h3>Things that cannot be undone</h3>
   <ul>

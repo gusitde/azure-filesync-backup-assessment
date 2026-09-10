@@ -74,7 +74,8 @@ That adds a federated credential, so GitHub Actions authenticates with OIDC and 
 secret to store or rotate.
 
 **What the administrator needs:** Application Administrator or higher in Entra ID to create
-the identity, and Owner or User Access Administrator on the subscription to grant the role.
+the identity, and Owner on the subscription - phase 1 creates the resource group as well as
+granting the role, which User Access Administrator alone cannot do.
 Nothing else in this kit needs privilege that high.
 
 ---
@@ -97,9 +98,17 @@ No prompts, no browser, no MFA. It signs in as the deployment identity and build
 | File Sync | Storage Sync Service and sync group |
 | DNS | Azure DNS Private Resolver with a delegated inbound subnet - the address your on-premises DNS forwards to |
 | Backup | Recovery Services vault with redundancy and cross-region restore set **before** anything is protected |
+| Backup policy | A daily snapshot policy, 60-day retention by default (`backupDailyRetentionDays` in `overrides`) |
+| Protection | Every share protected under that policy |
+| Lock-down | **Not reachable from the inputs file in this version** ([issue #1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)): the build leaves the public paths open. Close them by hand once the private endpoints resolve - `playbook-harden-existing-storage-account` and `playbook-enable-file-sync-private-endpoint-and-cutover` in `../codex/` |
 
-It is idempotent, so a re-run after a failure continues rather than starting over, and it ends
-by printing a verification command for every object it created.
+That is 15 steps, counting preflight (the progress counter says 17 - [issue #1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)).
+The preflight checks the five resource providers the build needs; register any missing one once
+as the administrator with `az provider register -n <namespace>`, because the deployment identity
+is scoped to one resource group. It is idempotent, so a re-run after a failure continues
+rather than starting over, and it ends by printing a verification command for every object it
+created - and, when run with `-Context`, by writing the as-built from live reads into
+`as-built/`.
 
 You can also run phase 2 without a context, using whatever session you already have:
 
@@ -123,17 +132,23 @@ deletion first, because a vault will not delete while it protects anything.
 
 ---
 
-## What is deliberately still manual
+## The three steps on your own machines
 
-Three things need a human on a specific machine, and automating them badly would fail
-confusingly:
+Phase 2 stops at the edge of Azure. Three steps touch machines you own; each has a script
+under [../onprem/](../onprem/), each runs a dry run with `-WhatIf`, and each reverses with
+`-Remove`. `start.ps1` offers all three under option 11, *Connect your on-premises servers*.
 
-1. **The Azure File Sync agent** - install on the file server, register it, create the server
-   endpoint.
-2. **On-premises DNS forwarders** - point them at the resolver inbound IP the deployment
-   printed, for the `privatelink` zones only, never the parent `core.windows.net`.
-3. **The AD DS domain join** - run from a domain-joined machine with AzFilesHybrid, using the
-   AD admin account and OU from your inputs file.
+1. **The Azure File Sync agent** - `Install-AfsServerEndpoint.ps1` installs it on the file
+   server over PowerShell remoting, registers the server, and creates the sync group, cloud
+   endpoint and server endpoint.
+2. **On-premises DNS forwarders** - `Set-AfsDnsForwarders.ps1` forwards the **public** zones,
+   `file.core.windows.net` and `afs.azure.net`, to the resolver inbound IP the deployment
+   printed. Not the `privatelink` zones: a forwarder on one is never consulted, because the
+   whole CNAME chain comes back in one answer. It refuses to write until the resolver answers
+   with a private address.
+3. **The AD DS domain join** - `Join-AfsStorageAccountToAdDs.ps1`, from a domain-joined machine
+   with the RSAT Active Directory module. It creates the computer object as the account that
+   runs it, so that account needs the create-computer right in the OU from your inputs file.
 
 ---
 

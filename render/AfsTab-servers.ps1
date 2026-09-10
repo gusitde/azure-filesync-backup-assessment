@@ -279,7 +279,7 @@ function Add-AfsTabServers {
 
         # ---- the join: first DNS label, case-insensitive. NEVER the FQDN ----------------
         # The fixture proves why: the cloud records FS01.contoso.local while the bundle's own
-        # domain is county.local. Both directions can miss; only one of them raises a rule.
+        # domain is corp.contoso.com. Both directions can miss; only one of them raises a rule.
         $bundleByHost = @{}
         foreach ($b in $bundles) {
             $k = ([string]$b.hostname).ToLower()

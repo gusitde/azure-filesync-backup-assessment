@@ -11,7 +11,7 @@ tags: [azure-file-sync, private-endpoint, storage-sync-service, expressroute, dn
 persona_run: eng-sysops
 ticket_kind: ops
 status: published
-version: 1
+version: 2
 execution: assisted
 last_verified: 2026-09-03T05:00 EST (UTC-4)
 artifacts: []
@@ -52,8 +52,10 @@ resolves `*.afs.azure.net` publicly stops syncing at that moment.
 2. **Create the Storage Sync Service private endpoint** (group id `Afs`) in the
    private-endpoint spoke with a DNS zone group for `privatelink.afs.azure.net`; the endpoint
    NIC receives four IPs; approve the connection if pending. Register the four IPs in IPAM.
-3. **Infoblox.** Add the conditional forwarder `privatelink.afs.azure.net` -> Private Resolver
-   inbound endpoint (if not already created by the DNS playbook).
+3. **Infoblox.** Add the conditional forwarder for the public zone `afs.azure.net` -> Private
+   Resolver inbound endpoint (if not already created by the DNS playbook) - not
+   `privatelink.afs.azure.net`, which is never consulted because the whole CNAME chain comes
+   back in one answer.
 4. **Verify DNS on every server**: the four FQDNs from the endpoint's NIC resolve to 10.x
    addresses; `Debug-StorageSyncServer -TestNetworkConnectivity` succeeds.
 5. **Managed identity (optional, recommended).** `Set-AzStorageSyncServiceIdentity` on the

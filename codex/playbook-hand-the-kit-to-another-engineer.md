@@ -11,7 +11,7 @@ tags: [documentation, onboarding, wizard, handover, offline, contoso]
 persona_run: eng-sysops
 ticket_kind: ops
 status: published
-version: 1
+version: 2
 execution: assisted
 last_verified: 2026-09-04T06:40 EST (UTC-4)
 artifacts: []
@@ -66,7 +66,7 @@ This entry covers the guide that closes that gap, and how to hand the kit over u
 6. **The troubleshooting table is evidence, not documentation.** Every message in it came out of
    a real run against a real tenant. When a message is not in the table, that is worth a
    correction rather than a shrug - see `CONTRIBUTING.md`.
-7. **Keep it honest.** The guide names the 17 build steps, the 10 menu options and the 10 tabs.
+7. **Keep it honest.** The guide names the 15 build steps, the 14 menu options and the 10 tabs.
    Change the wizard and change the guide in the same commit, or the first thing a new engineer
    learns from it is that it cannot be trusted.
 

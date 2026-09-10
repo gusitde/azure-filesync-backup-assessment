@@ -139,8 +139,10 @@ Design steps (they map to `NET-05`..`NET-11`):
    gateway in the hub VNet, spoke VNets peered with gateway transit. Private endpoints can
    live in a shared-services spoke; on-premises reaches them through the hub gateway.
 2. **DNS**: Azure DNS Private Resolver inbound endpoint in the hub; on-premises DNS (for
-   example an Infoblox grid) gets conditional forwarders for `privatelink.file.core.windows.net`
-   and `privatelink.afs.azure.net` (or the parent zones) pointing at the inbound endpoint.
+   example an Infoblox grid) gets conditional forwarders for the public zones
+   `file.core.windows.net` and `afs.azure.net` pointing at the inbound endpoint - a forwarder on
+   a `privatelink` zone is never consulted, because the whole CNAME chain comes back in one
+   answer.
    Link both private zones to the hub (and any VNet hosting Azure-side servers). Register
    the private endpoint IPs in IPAM.
 3. **Storage account private endpoint** (`file`) + DNS zone group. Verify from a registered

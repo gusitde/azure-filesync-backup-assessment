@@ -3,9 +3,10 @@
 What was built, how it was verified, and what the verification found. Every number here comes
 from a command that was run; nothing is asserted from a specification.
 
-**Period covered:** 2026-09-02 to 2026-09-03
+**Period covered:** 2026-09-02 to 2026-09-10. Counts re-measured at `V 2026.09.10.001`.
 **Environment used for validation:** Azure CLI 2.84.0, Windows PowerShell 5.1, a live Azure
-tenant with five subscriptions.
+tenant with five subscriptions, a lab resource group, and an on-premises lab with a Windows
+Server 2022 file server and Active Directory domain controllers.
 
 ---
 
@@ -13,13 +14,17 @@ tenant with five subscriptions.
 
 | Deliverable | Size | What it does |
 |---|---|---|
-| Assessment tooling | 3 PowerShell scripts | Read-only export of an Azure File Sync, storage, backup and private-networking estate; a per-server diagnostic bundle; an assessor with ~80 rules that turns an export into a findings report |
+| Guided front door | `start.ps1`, 14 menu options | Checks requirements, asks what you want to do, and runs the right scripts in order - a dry run first for anything that writes |
+| Assessment tooling | 3 PowerShell scripts, plus an HTML renderer with 7 subject tabs | Read-only export of an Azure File Sync, storage, backup and private-networking estate; a per-server diagnostic bundle; an assessor with 94 rules that turns an export into `assessment.md`, `findings.json` and a 13-tab `assessment.html` |
+| Governance | 1 script | Wraps the Azure Governance Visualizer for policy, RBAC, management groups, locks and Defender coverage |
 | Advisory track | 4 documents | A decision-led design path for a customer who will not or cannot share their configuration: 18 numbered decisions with defaults and reversal costs, a two-hour session guide, the design interview, a gated build sequence |
-| Codex library | 20 entries | 7 blueprints (target state), 9 playbooks (how to build), 4 runbooks (when it breaks) |
+| Deployment kit | two phases, 15 build steps | Four operator inputs; phase 1 creates a least-privilege deployment identity; phase 2 builds unattended and idempotently; a teardown with a safety inventory; an as-built generated from live reads |
+| On-premises scripts | 3 scripts, a shared library and 2 removal helpers | The File Sync agent and server endpoint, DNS conditional forwarders, and the AD DS domain join - each with `-WhatIf` and `-Remove` |
+| Requirements check | `deploy/AfsRequirements.ps1` | This machine, Azure (resource providers, the right to create role assignments), DNS servers, AD DS and the file server, in three states - ok, missing, unknown |
+| Codex library | 25 entries | 7 blueprints (target state), 13 playbooks (how to build), 5 runbooks (when it breaks) |
 | Diagram library | 97 diagrams | Grouped into 8 architecture principles, 9 to 13 per principle, deliberately mixed in kind |
 | Reference library | 73 sources | Microsoft reference architectures, Well-Architected and Cloud Adoption Framework guidance, security baselines, product documentation, each with a specific take-away |
-| Deployment kit | 4 files | A commented parameter file, an idempotent deployment script with what-if, a teardown script with a safety inventory, and a guide |
-| Test suite | 108 checks | Offline, against a synthetic fixture |
+| Test suite | 195 checks | Offline, against a synthetic fixture: the rule catalogue, rule severities, private-traffic mode, zip input, every report tab, the menu wiring, and a parse of the wizard |
 
 ---
 
@@ -27,17 +32,21 @@ tenant with five subscriptions.
 
 | Layer | Method | Result |
 |---|---|---|
-| Technical claims in the codex | Every claim extracted and checked against Microsoft documentation, then each reported error re-checked by an independent pass before being applied | **898 claims examined, 62 errors confirmed and corrected** |
-| `az` commands | Command path and every flag resolved against the installed CLI | **89 / 89 valid** |
-| PowerShell cmdlets | Every cmdlet resolved with `Get-Command`, every parameter checked against its real parameter set including aliases | **48 cmdlets, 111 parameter references, 0 invalid** |
+| Technical claims in the codex | Every claim extracted and checked against Microsoft documentation, then each reported error re-checked by an independent pass before being applied (2026-09-03, 20 entries at the time) | **898 claims examined, 62 errors confirmed and corrected** |
+| `az` commands | Command path and every flag resolved against the installed CLI (same corpus) | **89 / 89 valid** |
+| PowerShell cmdlets | Every cmdlet resolved with `Get-Command`, every parameter checked against its real parameter set including aliases (same corpus) | **48 cmdlets, 111 parameter references, 0 invalid** |
 | Read-only gate and verify commands | Executed against live Azure resources | **33 / 36 pass** |
 | Exporter ARM contract | Every API version and resource path called against live ARM | **23 / 23 return 200** |
-| Codex format | Strict validator | **20 / 20 entries valid, 0 errors** |
+| Codex format | `codex\import-to-luca.mjs --dry-run` against the strict validator (2026-09-10) | **25 / 25 would seed, 0 errors** |
 | Diagrams | Every file posted to a mermaid renderer | **97 / 97 render** |
 | Reference URLs | Every unique URL fetched | **57 / 57 return 200** |
-| Assessor logic | Offline fixture suite | **108 / 108 checks green** |
-| Deployment scripts | Parsed, then run end to end in what-if against a live subscription | **pass, 13 steps** |
-| Teardown safety refusal | Run against a real resource group holding unrelated resources | **correctly refused** |
+| Assessor, reports and wizard wiring | Offline fixture suite (2026-09-10) | **195 / 195 checks green** |
+| Deployment | What-if, then a real build in a lab subscription | **built end to end; a second run skipped what already existed** |
+| On-premises File Sync | Agent installed over PowerShell remoting, server registered, sync group and endpoints created | **files synced up** |
+| AD DS join | The join script against a lab domain | **joined as a computer object; `Debug-AzStorageAccountAuth` checks pass; a second run reports already joined** |
+| Backup and restore | On-demand backup under the 60-day policy; item-level restore of a folder to another location; forced change detection | **restore completed in 78 s, and the folder synced back down to the server** |
+| Requirements check | Against the lab estate | **41 checks; found a missing OU the join would have misreported as a permissions failure** |
+| Teardown | Against a vault whose soft delete a policy keeps always on, and against a group holding unrelated resources | **removed everything else and printed the retry date; correctly refused** |
 
 ---
 
@@ -104,6 +113,17 @@ the corpus from 56 cmdlets to 8 - **while still reporting a clean pass**. A vali
 shrinks its own input reports success by finding nothing. Corpus size is now asserted alongside
 the result.
 
+### 3.4 In the live runs
+
+Running the build, the on-premises steps and the teardown for real found defects that neither
+documentation review nor a what-if could: a DNS zone-group check that passed on an empty `{}`,
+so no A records were written; the Windows `az.cmd` wrapper failing on any `)` in an argument; a
+multi-line `tsv` answer read as one string; the CLI's shared default subscription retargeting a
+running build; a dot-sourced renderer binding its parameters in the caller's scope; a resource
+provider that had never been registered; a build that counted backup steps it did not yet have;
+and `powershell -File` silently dropping `-Confirm:$false`. Each is fixed, and recorded in
+[VALIDATION.md](VALIDATION.md) and the change log in [VERSION-CONTROL.md](VERSION-CONTROL.md).
+
 ---
 
 ## 4. Evidence captured
@@ -114,6 +134,9 @@ the result.
 | The assessor rule catalogue | [RULES.md](RULES.md) |
 | Verified reference sources with take-aways | [ARCHITECTURE-REFERENCES.md](ARCHITECTURE-REFERENCES.md) |
 | Diagram index by principle and kind | [../codex/diagrams/README.md](../codex/diagrams/README.md) |
+| The change log, one row per change, with the version stamp | [VERSION-CONTROL.md](VERSION-CONTROL.md) |
+| As-built documents from the lab build, read live from Azure | generated under `as-built/`; not committed, because they name real resources |
+| Run logs with timings and telemetry | `logs/`; not committed, for the same reason |
 | Commit history | One commit per change, each describing what was verified |
 
 ---
@@ -122,35 +145,37 @@ the result.
 
 Stated plainly rather than left for someone to discover.
 
-**No Azure resources have been created.** The tenant available for validation requires
-multi-factor authentication for every write:
+- **The DNS forwarder write, and the lock-down, against a live private path.** At the time of the
+  lab runs the resolver's inbound address was not reachable from on-premises. The forwarder
+  script refused to write, as designed, because the resolver did not answer with a private
+  address - so the forwarding design rests on Microsoft's documentation and on the refusal path,
+  not on a completed write. The build's lock-down step is not reachable from the inputs file in
+  this version ([issue #1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)), so closing the public paths is a manual step.
+- **ExpressRoute.** There is no circuit in the lab. The private-traffic rules
+  (`-PrivateTrafficRequired`) and the ExpressRoute design are documentation-verified.
+- **Azure Migrate and migrated-VM backup.** The procedures - the private-link landing, the cache
+  storage account, the Enhanced policy for Trusted Launch VMs - are shape-verified, with every
+  command and parameter resolved, but not executed.
+- **Key rotation and shared-key incidents.** That runbook is documentation- and shape-verified
+  only.
+- **A customer estate.** The assessor has run against the synthetic fixture and against exports
+  of the lab tenant, not against a customer's export.
+- **Two agent cmdlets.** `Debug-StorageSyncServer` and `Invoke-StorageSyncFileRecall` install
+  with the Azure File Sync agent; this record does not claim either as executed. The AzFilesHybrid
+  pair, `Join-AzStorageAccount` and `Debug-AzStorageAccountAuth`, has now run against a real
+  domain.
+
+**How the original blocker was cleared.** The first validation tenant required multi-factor
+authentication for every write:
 
 ```
 RequestDisallowedByAzure: ... tried to create, update or delete Azure resources
 without authenticating through MFA.
 ```
 
-The available account also holds only User Access Administrator, which manages role assignments
-and grants no resource-creation rights, and self-elevation hits the same MFA wall. So:
-
-- **Mutating commands are documentation-verified and shape-verified, not executed.** Every
-  `create`, `update` and `delete` has had its command path and flags resolved against the real
-  CLI, and the deployment script has been run end to end in what-if - but nothing has been
-  built.
-- **There is no as-built document and no screenshots**, because there is no deployment to
-  photograph. [AS-BUILT-TEMPLATE.md](AS-BUILT-TEMPLATE.md) is ready to be filled in, and states
-  exactly which command output and which portal view to capture for each feature.
-
-**To close this**, one of the following is needed:
-
-1. An interactive `az login` completing MFA on the machine that runs the deployment, or
-2. A service principal with Contributor on the target subscription, which is not subject to the
-   user MFA policy and is the better choice for repeatable automation.
-
-With either in place, `Deploy-AfsEnvironment.ps1` builds the environment from the parameter
-file and the as-built template can be completed from its output.
-
-**Also not executed:** five cmdlets that do not ship in a PowerShell Gallery module -
-`Debug-StorageSyncServer` and `Invoke-StorageSyncFileRecall` install with the Azure File Sync
-agent on a registered server; `Join-AzStorageAccount` and `Debug-AzStorageAccountAuth` come from
-AzFilesHybrid, distributed from GitHub; `Get-ADComputer` needs RSAT.
+and the account available held only User Access Administrator, which cannot create resources. It
+was cleared by an administrator holding Owner on the lab subscription signing in once with MFA.
+Phase 1 of the deployment is built around that: one interactive, MFA-completed sign-in creates a
+deployment identity with Contributor on one resource group, and everything after that runs as the
+identity, which the user MFA policy does not apply to. The code defects the README fact-check
+found are tracked in [issue #1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1).
