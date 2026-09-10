@@ -1,393 +1,259 @@
-# Azure File Sync and Azure Backup - assess, design, build, prove
+# Azure File Sync + Backup Kit
 
-**Luca AZ Consulting Helper** (`V 2026.09.10.001`) is a PowerShell kit and a reference library
-for one kind of estate: Windows file servers syncing to Azure file shares over a private path,
-with Azure Backup protecting the data. It reviews an estate that already exists, designs one with
-a customer who will not share their configuration, builds one from four inputs, connects your
-own servers to it, and shows you - with a command and the answer to expect - that each piece
-actually works.
+**Assess, design, build, connect and prove an Azure File Sync estate: Windows file servers syncing
+to Azure file shares through private endpoints, with Azure Backup protecting the shares - from one
+PowerShell menu.**
 
-Measured from this repository at that stamp: **195** offline test checks green, **94** assessor
-rules, a **15**-step build, a **14**-option guided menu, **25** codex entries and **97** diagrams.
+The kit is a guided wizard (`start.ps1`), eleven scripts you can also run on their own, and a
+reference library. It reviews an estate that already exists, helps you design one with a customer
+who will not share their configuration, builds one from four questions, connects your own servers to
+it, and shows you - with a command and the answer to expect - that each piece works. **To use it,
+read [the user guide](docs/USER-GUIDE.md)**: every option and script, what it asks, what it runs,
+what you see when it worked, and what to do when it did not.
 
-**Contents:** [What it can do](#what-it-can-do) - [Quick start](#quick-start) -
-[Make it work](#make-it-work) - [How to tell it works](#how-to-tell-it-works) -
-[Proven against live Azure](#proven-against-live-azure) - [When it goes wrong](#when-it-goes-wrong) -
-[Decisions that are expensive to reverse](#decisions-that-are-expensive-to-reverse) -
-[Repository layout](#repository-layout) - [Accuracy and contributing](#accuracy-and-contributing)
+<p align="center">
+  <img src="docs/img/wizard-menu.png" alt="The start.ps1 main menu in a Windows PowerShell window: the question What would you like to do? and the fourteen numbered options from How to use it to Quit" width="44%">&nbsp;
+  <img src="docs/img/report-backup.png" alt="The Backup tab of an assessment report: unprotected shares in red, the protected chain from share to policy" width="52%">
+</p>
 
-## What it can do
+**At a glance** (`V 2026.09.10.002`): 94 assessment rules, a 13-tab HTML report, a 15-step build, a 14-option menu, 25 blueprints, playbooks and runbooks, 97 diagrams and 195 tests that need no Azure account.
 
-| Capability | What you get | Where | Changes |
-|---|---|---|---|
-| **Assess** an existing estate | A read-only export of File Sync, storage accounts, Azure Backup, private endpoints, private DNS, the ExpressRoute topology and alert rules; 94 rules applied offline; a scorecard, findings with the evidence and a Microsoft reference for each, and a roadmap - as `assessment.md`, `findings.json` and a self-contained 13-tab `assessment.html` | `Export-AzFileSyncEnvironment.ps1`, `Assess-AzFileSyncExport.ps1` | nothing - ARM `GET` calls only |
-| **Diagnose a file server** | Agent version, services, volumes, filter drivers, sync errors, network tests and telemetry events, as one zip per server, with an optional tiered-file census | `Get-AfsServerDiagnostics.ps1` | nothing |
-| **Assess governance** | Policy assignments, RBAC, the management-group tree, locks and Defender coverage across the tenant, by wrapping the Azure Governance Visualizer | `Invoke-AfsGovernanceAssessment.ps1` | nothing |
-| **Advise** when there is nothing to assess | 18 design decisions, each with a default, a reason and a reversal cost; a two-hour session guide; the export asked as interview questions; a gated build sequence | [advise/](advise/) | nothing |
-| **Build** a new environment | Storage account and shares, virtual network, private endpoints for Azure Files and for File Sync, both private DNS zones, a DNS Private Resolver, the Storage Sync Service, a Recovery Services vault, a daily backup policy with 60-day retention, and every share protected | [deploy/](deploy/), in two phases | one resource group and one Entra application |
-| **Connect your servers** | Install the File Sync agent, register the server and sync a folder; forward on-premises DNS to the resolver; domain-join the storage account for AD DS authentication | [onprem/](onprem/) | your file server, DNS and Active Directory |
-| **Prove it** | A requirements check before you start, a what-if before every write, a verify command for every object afterwards, an as-built generated from live reads, and a restore test | `start.ps1` options 8 and 13, `deploy/Export-AfsAsBuilt.ps1` | nothing |
-| **Remove it** | A teardown that inventories first and refuses to delete what it did not build | `deploy/Remove-AfsEnvironment.ps1` | the resource group |
-| **Look it up** | 7 blueprints (target state), 13 playbooks (how to build, including handing the kit to another engineer), 5 runbooks (when it breaks), 97 diagrams, [73 verified Microsoft references](docs/ARCHITECTURE-REFERENCES.md), and a one-page offline guide | [codex/](codex/), [docs/](docs/) | - |
+**On this page:** [Why teams use it](#why-teams-use-it) | [What you get](#what-you-get) | [How it fits together](#how-it-fits-together) | [What it builds](#what-it-builds) | [See what you get](#see-what-you-get) | [Proven against live Azure](#proven-against-live-azure) | [Try it in five minutes](#try-it-in-five-minutes---no-azure-account-needed) | [The menu](#the-menu) | [What is in the box](#what-is-in-the-box) | [Known limitations](#known-limitations-and-contributing)
 
-## Quick start
+## Why teams use it
+
+- **It knows the order that works.** Private-path File Sync fails in predictable ways: DNS
+  forwarded for the wrong zone, the public path closed too early, a vault redundancy that can no
+  longer change, a backup nobody has restored. The kit builds in the order that avoids each one.
+- **It works with or without the customer's data.** Assess needs only Reader and an export.
+  Advise needs no export at all: 18 design decisions, a two-hour session and a gated build plan.
+- **Every claim comes with evidence.** Each object it builds gets a read-back command, the
+  as-built is read from Azure after the build rather than written from the plan, and the restore
+  test ends with the deleted file back on the file server.
+- **It is safe to hand over.** Every build phase, the teardown and each on-premises step asks
+  before its real run, and from the wizard phase 2, the teardown and the on-premises steps show a
+  dry run first. Phase 1 (the identity) runs for real once you say yes, and each re-run issues a
+  new one-year secret. Two things happen unasked: the agent step's dry run creates any missing sync
+  folder on the file server
+  ([#3](https://github.com/gusitde/azure-filesync-backup-assessment/issues/3)), and the wizard
+  switches your Azure CLI default subscription, for every window on the machine, and saves your
+  on-premises answers to `deploy\inputs.json`. A failed build re-runs from where it stopped, and the
+  wizard, build, teardown, as-built, governance and on-premises scripts each write a log, with
+  passwords and client secrets on `az` lines masked.
+
+## What you get
+
+| Capability | What you get | Changes |
+| --- | --- | --- |
+| **Assess** an existing estate | A read-only export of File Sync, storage accounts, Azure Backup, private endpoints, private DNS, hybrid network topology and alert rules. 94 rules applied offline. A self-contained 13-tab HTML report with the evidence and a Microsoft reference for every finding, plus Markdown and JSON | Nothing in Azure |
+| **Diagnose** file servers | One bundle per server: agent, services, filter drivers, volumes, sync sessions, event logs, network tests, and an optional tiered-file census | Nothing in Azure; writes the bundle folder and its zip where you run it. `-CollectAfsDiag` also runs the agent's AFSDiag collection at Verbose trace level |
+| **Advise** when there is nothing to assess | 18 decisions, each with a default, a reason and a reversal cost; a session guide; the export asked as interview questions; a gated day-1-to-day-90 plan | Nothing |
+| **Build** a new environment | Storage account and shares, virtual network, private endpoints for Azure Files and File Sync, both private DNS zones, a DNS Private Resolver, the Storage Sync Service, a geo-redundant Recovery Services vault and a daily 60-day backup policy on every share | One resource group; one Entra app and service principal with a one-year client secret and Contributor on that group; up to five resource providers registered on the subscription; the Azure CLI's default subscription |
+| **Connect** your servers | Install the File Sync agent and sync folders; forward on-premises DNS to the resolver; domain-join the storage account for identity-based access | Your file server, DNS servers and Active Directory; in Azure, the File Sync server registration, the sync groups, the cloud and server endpoints, and the storage account's AD DS settings |
+| **Prove** it works | A requirements check before you start, a read-back command for every object, an as-built generated from live reads, and a restore test | Nothing, except: the restore test backs up a test file, deletes it and restores it to the share; the requirements check offers to add a CLI extension to this machine |
+| **Govern** the tenant | Policy, RBAC, the management-group tree, locks and Defender coverage, through the Azure Governance Visualizer | Nothing in Azure |
+| **Remove** it | A teardown of the resource group only. It inventories the group first and refuses when it holds a resource whose name contains none of the configured names (a name match, not a record of what the build created; `-Force` skips it). Do it last: first remove the server endpoints, the conditional forwarders and the storage account's AD object, then run it, then delete the Entra app ([the order](docs/USER-GUIDE.md#option-7-remove-an-environment-i-built)). Run first, it deletes the resolver that on-premises DNS still forwards `file.core.windows.net` and `afs.azure.net` to, for every storage account | The resource group only. While vault soft delete holds backup data, everything in the group except the vault |
+| **Look it up** | The [codex library](codex/README.md): 7 blueprints, 13 playbooks, 5 runbooks, 97 diagrams and 73 Microsoft references | Nothing |
+
+## How it fits together
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'Segoe UI, Helvetica, Arial, sans-serif','fontSize':'14px','lineColor':'#64748b','primaryTextColor':'#0f172a','edgeLabelBackground':'#f8fafc'}}}%%
+flowchart TB
+    start(["A Windows file-server estate<br/>that has to reach Azure"]):::dark --> q{"Does a File Sync estate exist,<br/>and will they share<br/>its configuration?"}:::ask
+    q -->|"yes"| A["ASSESS<br/>read-only export<br/>94 rules, 13-tab report"]:::read
+    q -->|"no, or they<br/>will not share"| D["ADVISE<br/>18 decisions<br/>a two-hour session"]:::read
+    A --> R["Roadmap tab<br/>do now, this engagement,<br/>backlog"]:::read & K["Codex playbooks<br/>to fix each finding"]:::read
+    D --> B["BUILD<br/>four questions<br/>two phases, 15 steps"]:::change
+    B --> C["CONNECT<br/>agent, DNS forwarders,<br/>AD DS join;<br/>registration, sync groups<br/>and endpoints in Azure"]:::change
+    C --> P["PROVE<br/>read-back commands,<br/>as-built, restore test"]:::prove
+    subgraph JOBS["Separate jobs, run on their own"]
+        G["GOVERN<br/>tenant policy<br/>and RBAC report"]:::read
+        X["REMOVE<br/>the resource group only,<br/>after the on-premises teardown"]:::danger
+    end
+    P ~~~ G & X
+    classDef dark fill:#0f172a,stroke:#0f172a,color:#ffffff
+    classDef ask fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef read fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef change fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef prove fill:#ccfbf1,stroke:#0d9488,color:#134e4a
+    classDef danger fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    style JOBS fill:#ffffff,stroke:#94a3b8,color:#0f172a
+```
+
+Colours in this diagram: blue only reads; green creates or changes something in Azure (CONNECT also
+changes your file server, DNS and Active Directory); teal verifies; red deletes and cannot be
+undone; amber is a decision. Assess and Advise both draw on the [codex](codex/README.md) of
+blueprints (the target state), playbooks (how to build it) and runbooks (what to do when it breaks).
+
+## What it builds
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'Segoe UI, Helvetica, Arial, sans-serif','fontSize':'14px','lineColor':'#64748b','primaryTextColor':'#0f172a','edgeLabelBackground':'#f8fafc'}}}%%
+flowchart LR
+    subgraph ONP["Your network"]
+        direction TB
+        FS["Windows file server<br/>File Sync agent"]:::mine
+        DNS["On-premises DNS<br/>forwards the public zones"]:::mine
+        AD["Active Directory"]:::mine
+    end
+    subgraph AZ["Azure - rg-contoso-filesync"]
+        direction TB
+        subgraph VNET["vnet-contoso-filesync"]
+            PEF["Private endpoint<br/>Azure Files"]:::net
+            PEA["Private endpoint<br/>File Sync"]:::net
+            RES["DNS Private Resolver<br/>inbound endpoint"]:::net
+        end
+        ZONES[("Both privatelink<br/>DNS zones")]:::dns
+        ST[("Storage account<br/>file shares")]:::data
+        SSS["Storage Sync<br/>Service"]:::data
+        RSV["Recovery Services<br/>vault"]:::backup
+    end
+    FS ==>|"ExpressRoute or VPN<br/>you provide this"| PEA
+    FS ==> PEF
+    DNS -->|"forwarder"| RES
+    RES --> ZONES
+    PEF --> ST
+    PEA --> SSS
+    SSS -.->|"trusted<br/>services"| ST
+    RSV -.->|"snapshots"| ST
+    AD -.->|"Kerberos"| ST
+    classDef mine fill:#f1f5f9,stroke:#475569,color:#0f172a
+    classDef net fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef dns fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef backup fill:#ccfbf1,stroke:#0d9488,color:#134e4a
+    style ONP fill:#ffffff,stroke:#94a3b8,color:#0f172a
+    style AZ fill:#eff6ff,stroke:#60a5fa,color:#0f172a
+    style VNET fill:#ffffff,stroke:#93c5fd,stroke-dasharray: 4 3,color:#0f172a
+```
+
+Key, and here the colours mark components rather than actions: grey is your machines, blue is networking in Azure, amber is the private DNS zones, green is storage and File Sync, teal is backup.
+
+**You bring the network path, and you close the public paths.** By default the build creates a new
+virtual network with no VPN gateway, no ExpressRoute connection and no peering: the path from
+on-premises into it is yours to provide (ExpressRoute or VPN, and peering to your hub if you use
+one). The build also leaves both public paths open, the storage account's and the Storage Sync
+Service's; close them by hand once the private endpoints resolve from on-premises
+([after a build](docs/USER-GUIDE.md#next-2),
+[#1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)). Microsoft reference:
+[the Storage Sync Service endpoint](https://learn.microsoft.com/azure/storage/file-sync/file-sync-networking-endpoints#disable-access-to-the-storage-sync-service-public-endpoint)
+and [the storage account endpoint](https://learn.microsoft.com/azure/storage/file-sync/file-sync-networking-endpoints#grant-access-to-trusted-azure-services-and-disable-access-to-the-storage-account-public-endpoint).
+
+Names derive from the prefix `contoso` in `eastus`. The network is `10.60.0.0/16`, private endpoints
+`10.60.1.0/26`, the resolver `10.60.2.0/28`; the zones are `privatelink.file.core.windows.net` and
+`privatelink.afs.azure.net`, and the File Sync endpoint publishes four names. On-premises DNS forwards
+the **public** zones, `file.core.windows.net` and `afs.azure.net` ([why](docs/USER-GUIDE.md#why-on-premises-dns-forwards-the-public-zone)); the File Sync server is a cache and is never backed up, the share is.
+
+## See what you get
+
+The assessment report is one HTML file with no external assets: it opens from a laptop, a file share or an air-gapped jump box,
+and every finding carries its evidence and a Microsoft reference. The screenshots show the synthetic estate in `fixtures/`, assessed with `-PrivateTrafficRequired`.
+
+![Assessment report header and scorecard: 18 High, 29 Medium, 22 Low and 15 Info findings, with the thirteen tabs above](docs/img/report-scorecard.png)
+![The Findings tab: each finding with its ID, area, severity, resource, evidence, recommendation and a reference link](docs/img/report-findings.png)
+
+## Proven against live Azure
+
+The build and the on-premises steps ran for real on 2026-09-03 and 2026-09-04, in a lab
+subscription with a Windows Server 2022 file server and Active Directory on premises:
+
+- **Build:** both phases end to end; a second run skipped everything that already existed.
+- **Servers:** agent installed over PowerShell remoting, server registered, files synced up; the
+  storage account joined to AD DS and `Debug-AzStorageAccountAuth` passed
+  ([codex](codex/playbook-enable-identity-based-auth-ad-ds.md)).
+- **Restore:** an item-level folder restore to an alternate location completed in 78 seconds, and the restored files then synced back down to the file server.
+- **Teardown:** with vault soft delete held always-on, it removed everything else and printed the retry date.
+- **Library:** 898 claims fact-checked (62 corrected) and 89 of 89 `az` commands resolved, both
+  across the 20 codex entries that existed on 2026-09-03; 33 of 36 read-only checks passed live.
+
+**Not proven live:** the DNS forwarder write (only its refusal), the lock-down step, ExpressRoute
+routing, and the Azure Migrate and migrated-VM backup procedures. Record:
+[PROOF-OF-WORK.md](docs/PROOF-OF-WORK.md), [VALIDATION.md](docs/VALIDATION.md).
+
+## Try it in five minutes - no Azure account needed
+
+You need Windows PowerShell 5.1 (`powershell.exe`), Git and Python 3; the Azure CLI only for step 3.
+Windows PowerShell 5.1 because the AD DS join needs it, and the requirements check treats
+PowerShell 7 as a blocker. Do not use Git Bash: it rewrites Azure resource IDs into Windows paths.
 
 ```powershell
 git clone https://github.com/gusitde/azure-filesync-backup-assessment.git
 cd azure-filesync-backup-assessment
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass        # this window only
+
+# 1. Rebuild the synthetic server bundle, then prove this copy of the kit is intact
+python fixtures\make-fixture.py
+.\tests\run-tests.ps1                                              # ends: ALL GREEN (195 checks)
+
+# 2. Assess the synthetic estate offline and open the report
+.\Assess-AzFileSyncExport.ps1 -ExportPath .\fixtures\sample-export -CustomerName Contoso -OutputPath $env:TEMP\afs-sample
+Invoke-Item $env:TEMP\afs-sample\assessment.html
+
+# 3. Start the wizard, then choose 8 to see what your machine and account still need
 .\start.ps1
 ```
 
-Run it from **Windows PowerShell 5.1** in an ordinary PowerShell window - not Git Bash, which
-corrupts Azure resource IDs. If Windows refuses to run the script, allow it for this window
-only with `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`. Then choose **8, Check
-requirements** - it reports what is missing and the exact command to fix each gap before anything
-changes - and **1, How to use it** for the offline guide, [docs/HOW-TO-USE.html](docs/HOW-TO-USE.html).
-Every step that changes something shows a dry run first and asks before it goes ahead.
+Step 1 comes first because the synthetic server bundle is not committed
+([#3](https://github.com/gusitde/azure-filesync-backup-assessment/issues/3)): without it nine
+checks fail and the step 2 report carries no server findings. Step 2 prints
+`Findings: High=13 Medium=27 Low=22 Info=15` and the report path; add `-PrivateTrafficRequired` for
+the 18 High and 29 Medium in the screenshots above. Full walk-through:
+[Your first hour](docs/USER-GUIDE.md#1-your-first-hour).
 
-| # | Menu option | What it does |
-|---|---|---|
-| 1 | How to use it | Opens the offline guide at the tab you pick |
-| 2 | Deployment settings | Edits `deploy/inputs.json` - names, region, network, backup, directory - and marks which values are derived |
-| 3 | Build a new Azure File Sync environment | Phase 1 (the identity), then phase 2 (the build), dry run first |
-| 4 | Assess an existing environment | Export, optional server diagnostics, assess |
-| 5 | See the assessment results | Opens any tab of a report, or prints the severity counts and top findings in the terminal |
-| 6 | Assess policy and governance across the tenant | Runs the governance wrapper |
-| 7 | Remove an environment I built | The teardown, dry run first |
-| 8 | Check requirements | This machine, Azure, your DNS servers, AD DS and the file server. Read-only |
-| 9 | Read the documentation | Every guide, with what each one is for |
-| 10 | Browse the blueprints, playbooks and runbooks | The codex library |
-| 11 | Connect your on-premises servers | Agent and server endpoint, DNS forwarders, AD DS join, dry run first |
-| 12 | Resume the last build | A dry run, then the build again - it is idempotent; up to five attempts, asking before each retry |
-| 13 | Open the findings and as-built reports | Every report produced so far, or generate the as-built now |
-| 14 | Quit | |
+## The menu
 
-Every run writes `logs\<run>.log`, a `.jsonl` copy for tooling and a console transcript. Add
-`-LogLevel Debug` for full Azure CLI traces, or `-LogLevel Quiet` for warnings and errors only.
+Every job is reachable from `start.ps1`: the thirteen below, plus option 14, Quit. Every run writes
+`logs\<run>.log`, a `.jsonl` twin and a console transcript, and each option links to its guide section.
 
-## Make it work
+| Job | Option | What it does | Changes |
+| --- | --- | --- | --- |
+| Learn | [1 How to use it](docs/USER-GUIDE.md#option-1-how-to-use-it) | Opens the offline guide at the section you pick | Nothing |
+| | [9 Read the documentation](docs/USER-GUIDE.md#option-9-read-the-documentation) | Every guide, with what each one is for | Nothing |
+| | [10 Browse the blueprints, playbooks and runbooks](docs/USER-GUIDE.md#option-10-browse-the-blueprints-playbooks-and-runbooks) | The codex library | Nothing |
+| Prepare | [8 Check requirements](docs/USER-GUIDE.md#option-8-check-requirements) | This machine, Azure, DNS servers, AD DS and the file server: ok, missing or could not check, with the fix for each gap | Nothing, except an offer to add a CLI extension |
+| | [2 Deployment settings](docs/USER-GUIDE.md#option-2-deployment-settings) | Every build setting with the value in force, derived or set; edits `deploy\inputs.json` | A local file |
+| Assess | [4 Assess an existing environment](docs/USER-GUIDE.md#option-4-assess-an-existing-environment) | Export the configuration (Reader), or assess an export you already have | Nothing in Azure |
+| | [5 See the assessment results](docs/USER-GUIDE.md#option-5-see-the-assessment-results) | Opens any tab of a report, prints the headline numbers, or rebuilds an old report | Nothing in Azure; a rebuild rewrites the report files |
+| | [6 Assess policy and governance](docs/USER-GUIDE.md#option-6-assess-policy-and-governance-across-the-tenant) | Runs the Azure Governance Visualizer across the tenant | Nothing in Azure |
+| | [13 Open the findings and as-built reports](docs/USER-GUIDE.md#option-13-open-the-findings-and-as-built-reports) | Lists assessment, as-built and governance reports; generates the as-built | Nothing in Azure |
+| Build | [3 Build a new Azure File Sync environment](docs/USER-GUIDE.md#option-3-build-a-new-azure-file-sync-environment) | Four questions, phase 1 (the identity), then phase 2 as a dry run and for real | A resource group; an Entra app with a one-year secret and Contributor on that group; up to five resource providers on the subscription; your Azure CLI default subscription |
+| | [12 Resume the last build](docs/USER-GUIDE.md#option-12-resume-the-last-build) | Phase 2 again from the saved context; it skips what exists | The resource group, any missing resource providers, your Azure CLI default subscription |
+| | [11 Connect your on-premises servers](docs/USER-GUIDE.md#option-11-connect-your-on-premises-servers) | Agent and endpoints, DNS forwarders, AD DS join; dry run, then asks | Your servers, DNS and Active Directory; in Azure, the Storage Sync Service and the storage account's AD DS settings |
+| Remove | [7 Remove an environment I built](docs/USER-GUIDE.md#option-7-remove-an-environment-i-built) | Dry run, type `DELETE`, then the teardown. Run it last, after the on-premises teardown | The resource group only. While vault soft delete holds backup data, it deletes everything except the vault and prints the two commands to finish after the date it gives |
 
-### 1. The machine
+## What is in the box
 
-| You need | For | How to get it |
-|---|---|---|
-| Windows PowerShell 5.1 | everything; the AD DS join runs only on 5.1 | built into Windows |
-| Azure CLI (tested with 2.84.0) | build, teardown, on-premises steps, as-built | `winget install --exact --id Microsoft.AzureCLI`, or <https://aka.ms/installazurecliwindows> |
-| The `dns-resolver` CLI extension | the DNS Private Resolver step | `az extension add --name dns-resolver` - the build's preflight installs it if it is missing |
-| `Az.Accounts` | the export | `Install-Module Az.Accounts -Scope CurrentUser` |
-| `Az.Storage`, `Az.StorageSync` | registering a server, creating its endpoints, closing the File Sync public path | `Install-Module <name> -Scope CurrentUser` |
-| `Az.RecoveryServices` | the restore procedure in the codex runbook (the CLI's `az backup restore restore-azurefiles` also restores single files) | `Install-Module Az.RecoveryServices -Scope CurrentUser` |
-| RSAT Active Directory module | the AD DS join | once, elevated: `Install-WindowsFeature RSAT-AD-PowerShell` (Windows Server) or `Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0` (Windows client) |
-| RSAT DNS Server module | the DNS forwarders | once, elevated: `Install-WindowsFeature RSAT-DNS-Server` or `Add-WindowsCapability -Online -Name Rsat.Dns.Tools~~~~0.0.1.0` |
-| PowerShell 7 | governance only | `pwsh` on the path, or a portable copy unzipped into `.pwsh7\` - no administrator needed |
-| PowerShell remoting (WinRM, HTTP port 5985) to the file server | the agent install | the requirements check reads the rest from the server: OS build, .NET 4.7.2, and that each folder is on a local NTFS volume other than the system drive |
+Which document is which: this page is the overview; [docs/USER-GUIDE.md](docs/USER-GUIDE.md) is the wizard, the tutorial, troubleshooting and how it
+works; [docs/SCRIPT-REFERENCE.md](docs/SCRIPT-REFERENCE.md) is every script's parameters, examples and output, plus the settings file - the two were
+split because one file was too large to render comfortably. [docs/HOW-TO-USE.html](docs/HOW-TO-USE.html) is a single offline page for handing the kit
+over (menu option 1 opens it), and [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) covers dependencies and sign-in in more depth.
 
-Installing the two RSAT modules is the only step that needs local administrator on your own
-machine, and only once.
+| Path | What it is | Start with |
+| --- | --- | --- |
+| `start.ps1` | The guided front door | [User guide](docs/USER-GUIDE.md) |
+| `Export-AzFileSyncEnvironment.ps1`, `Get-AfsServerDiagnostics.ps1`, `Assess-AzFileSyncExport.ps1`, `Render-AfsAssessmentHtml.ps1`, `render/` | Export, per-server bundle, assessor, HTML report | [Assessment playbook](docs/PLAYBOOK-azure-file-sync-assessment.md), [rules](docs/RULES.md) |
+| `Invoke-AfsGovernanceAssessment.ps1` | The governance wrapper | [Option 6](docs/USER-GUIDE.md#option-6-assess-policy-and-governance-across-the-tenant) |
+| `deploy/` | Settings file, both build phases, teardown, as-built, requirements check, logging | [The settings file](docs/SCRIPT-REFERENCE.md#4-the-settings-file) |
+| `onprem/` | Agent and server endpoint, DNS forwarders, AD DS join | [Option 11](docs/USER-GUIDE.md#option-11-connect-your-on-premises-servers) |
+| `advise/` | Designing with a customer who will not share their data | [SESSION-GUIDE.md](advise/SESSION-GUIDE.md), then [REFERENCE-DESIGN.md](advise/REFERENCE-DESIGN.md) |
+| `codex/` | Blueprints, playbooks, runbooks and diagrams | [codex/README.md](codex/README.md) |
+| `docs/` | User guide, [script reference](docs/SCRIPT-REFERENCE.md), offline guide, playbooks, rules, references, proof of work, change log | [HOW-TO-USE.html](docs/HOW-TO-USE.html) for an offline handover |
+| `fixtures/`, `tests/` | The synthetic estate and the offline test suite | [Maintaining the kit](docs/USER-GUIDE.md#9-maintaining-the-kit) |
 
-### 2. The access
+Ignored by git: export folders (`afs-export-*`), every zip, server bundles (`*-afs-server-*`),
+`logs/`, `assessment-latest/`, `as-built/`, `governance/`, `deploy/inputs.json`,
+`deploy/deployment-context.json` and `deploy/deployment-identity.json` - the last holds the
+deployment identity's secret. Reports are not ignored everywhere: assessing a zip writes
+`assessment.md`, `findings.json` and `assessment.html` beside the zip, which for an export the
+wizard made is the kit folder itself. Option 4 does not ask where to put them, so run
+`Assess-AzFileSyncExport.ps1` yourself with `-OutputPath` outside the kit, and read `git status`
+before you commit.
 
-| Step | Who runs it | What that account needs |
-|---|---|---|
-| Export | anyone | **Reader** on the subscriptions in scope |
-| Assess | anyone | nothing - it reads the export offline |
-| Governance | anyone | **Reader** at the management group (the tenant root by default) |
-| Build, phase 1 - once | an Entra administrator, interactively, with MFA | **Application Administrator** or higher in Entra ID, and **Owner** on the subscription - phase 1 creates the resource group as well as granting a role, and User Access Administrator alone cannot create it. Register the five resource providers now too (see step 4) |
-| Build, phase 2 - as often as you like | the deployment identity phase 1 creates | **Contributor on the one resource group** - phase 1 grants exactly that |
-| Create a cloud endpoint (part of connecting a server) | you | the right to create role assignments on the storage account - **Owner**, **User Access Administrator** or **Azure File Sync Administrator**. Contributor is refused, because the endpoint grants the File Sync service a role |
-| Forward DNS | you, or `-Credential` | the right to create zones on the DNS servers (DnsAdmins or equivalent) |
-| AD DS join | you | permission to create a computer object in the target OU - **not** Domain Admin. Delegate it with `dsacls "<OU DN>" /I:T /G "<DOMAIN>\<user>:CC;computer"` |
-| File server | you, or `-Credential` | local administrator on the server |
+## Known limitations and contributing
 
-**If a write fails with `RequestDisallowedByAzure ... without authenticating through MFA`**, the
-session signed in without multi-factor and no role will fix it: run `az logout`, then `az login`
-and complete the prompt. If the CLI prints an `az login --scope ... --claims-challenge ...`
-command, run exactly that one - a plain `az login` reuses the cached token.
-
-### 3. Assess an existing estate (read-only)
-
-```powershell
-Install-Module Az.Accounts -Scope CurrentUser                  # once
-Connect-AzAccount -Tenant <tenant-id>                           # an account with Reader
-.\Export-AzFileSyncEnvironment.ps1                              # every enabled subscription; -SubscriptionId <id> to narrow
-.\Get-AfsServerDiagnostics.ps1 -OutputPath C:\temp              # optional, on each file server, elevated; -SampleTieredFiles adds a tiered-file census
-.\Assess-AzFileSyncExport.ps1 -ExportPath .\afs-export-<stamp> -CustomerName "Contoso"
-```
-
-`-ExportPath` takes the export folder or its zip. With server bundles, put each server zip in
-`servers\<hostname>\` inside the export **folder** (unzip the export first if you only have the
-zip) and assess the folder - a zip passed to the assessor never contains `servers\`
-([#1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)). Add
-`-PrivateTrafficRequired` when sync must stay on ExpressRoute or another private path - it turns
-on the private-network rules and escalates the public-path findings. `-ListRules` prints the
-catalogue, also in [docs/RULES.md](docs/RULES.md). The export carries resource names and
-settings - no file data, no keys, no SAS tokens - and a redaction pass blanks well-known secret
-fields anyway. Walk-through: [docs/PLAYBOOK-azure-file-sync-assessment.md](docs/PLAYBOOK-azure-file-sync-assessment.md).
-
-### 4. Build a new environment
-
-You enter four things; everything else is derived from them.
-
-```powershell
-cd deploy
-Copy-Item inputs.sample.jsonc inputs.json                                   # then fill in the four inputs below
-.\Deploy-AfsEnvironment.ps1 -InputFile .\inputs.json -ShowResolved          # every name it will use; calls nothing
-.\Phase1-New-DeploymentIdentity.ps1 -InputFile .\inputs.json                # once, as the administrator, with MFA
-.\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf      # the real preflight, then every step; changes nothing
-.\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json              # unattended, as the deployment identity
-```
-
-| # | Input | Why it is asked |
-|---|---|---|
-| 1 | Entra administrator and tenant | Phase 1 only: creates the deployment identity and grants it Contributor on the resource group |
-| 2 | Subscription, region and a short `namePrefix` | Every resource name derives from it: `contoso` in `eastus` gives `rg-contoso-filesync`, `stcontosofs01`, `sss-contoso-filesync`, `rsv-contoso-eastus` and so on |
-| 3 | AD admin account | For the domain join. It needs the create-computer right in the OU, not Domain Admin |
-| 4 | AD basics | Domain FQDN, NetBIOS name, the OU and the object type |
-
-Phase 1 proves the session may write by creating the resource group, creates the identity, grants
-it Contributor on that group only, writes `deployment-context.json`, then signs in as the new
-identity to prove it works (`-Federate -GitHubRepo owner/repo` issues a GitHub OIDC credential
-instead of a secret). **While you are signed in as the administrator, register the five resource
-providers** the build needs - `az provider register -n <namespace>` for `Microsoft.Storage`,
-`Microsoft.Network`, `Microsoft.StorageSync`, `Microsoft.RecoveryServices` and
-`Microsoft.Insights`. Phase 2's preflight checks them, but its identity is scoped to one resource
-group and cannot register them.
-
-Phase 2 runs 15 steps: preflight; the resource group, storage account, 14-day share soft delete
-and shares; the network and private DNS zones; the storage private endpoint, the Storage Sync
-Service and its private endpoint; the resolver; the vault, with its redundancy and cross-region
-restore set before anything is protected; the backup policy; and protection for each share. It
-is idempotent - fix the cause of a failure and run it again, or use menu option 12 - and it ends
-by printing a verify command for every object and writing the as-built. Details:
-[deploy/README.md](deploy/README.md).
-
-**Close the public paths by hand, once the private path is proven.** The build leaves them open:
-in this version its lock-down step is not reachable from the inputs file
-([#1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)). When a client on
-your network resolves the storage account to a private address (see
-[How to tell it works](#how-to-tell-it-works)):
-
-```powershell
-az storage account update -g <rg> -n <account> --default-action Deny --bypass AzureServices
-Set-AzStorageSyncService -ResourceGroupName <rg> -Name <sss> -IncomingTrafficPolicy AllowVirtualNetworksOnly
-```
-
-The checks and the rollback are in
-[codex/playbook-harden-existing-storage-account.md](codex/playbook-harden-existing-storage-account.md)
-and [codex/playbook-enable-file-sync-private-endpoint-and-cutover.md](codex/playbook-enable-file-sync-private-endpoint-and-cutover.md).
-Closing the public path before the private endpoint resolves is the most common way to break sync.
-
-### 5. Connect your on-premises servers
-
-Three steps run against machines you own. Each script under [onprem/](onprem/) is idempotent,
-supports `-WhatIf`, and reverses with `-Remove`. Menu option 11 runs them for you, dry run first.
-
-```powershell
-# the file server: install the agent, register it, create the sync group, cloud endpoint and server endpoint
-.\onprem\Install-AfsServerEndpoint.ps1 -Context .\deploy\deployment-context.json -FileServer fs01 -SharePath 'dept-shares=D:\Shares\dept' -WhatIf
-
-# on-premises DNS: forward the PUBLIC zones to the resolver's inbound address
-.\onprem\Set-AfsDnsForwarders.ps1 -Context .\deploy\deployment-context.json -DnsServer dc01,dc02 -WhatIf
-
-# Active Directory: domain-join the storage account for identity-based access
-.\onprem\Join-AfsStorageAccountToAdDs.ps1 -Context .\deploy\deployment-context.json -OrganizationalUnit 'OU=AzureFiles,DC=corp,DC=contoso,DC=com' -WhatIf
-```
-
-Drop `-WhatIf` to run them for real. Two things decide whether they work:
-
-- **Forward the public zones, not the `privatelink` ones.** A client asks for
-  `<account>.file.core.windows.net`, and a recursive resolver returns the whole chain - public
-  name, `privatelink` alias, private address - in one answer, so a forwarder on
-  `privatelink.file.core.windows.net` is never consulted. The script forwards
-  `file.core.windows.net` and `afs.azure.net`, and refuses to write until the resolver is proven
-  to answer with a private address, because from then on every lookup under those names depends
-  on it.
-- **The join creates the AD object as whoever runs it.** `Join-AzStorageAccount` has no
-  credential parameter, so the account running the script needs the create-computer right in the
-  OU; the script prints the `dsacls` line when it is missing. `-CreateOrganizationalUnit` with
-  `-AdCredential` covers an OU that does not exist yet.
-
-### 6. Protect the data, then prove a restore
-
-The build protects every **Azure file share** under a daily snapshot policy (60 days by default,
-`backupDailyRetentionDays` in `overrides`). It deliberately does not back up the server: a File
-Sync server endpoint is a cache, and a file-level backup agent walking tiered files recalls the
-whole dataset. Migrated VMs are a third, separate surface -
-[codex/blueprint-azure-vm-backup-for-migrated-servers.md](codex/blueprint-azure-vm-backup-for-migrated-servers.md).
-
-A backup is not protection until a restore has worked:
-
-1. Put a test file in a server endpoint folder and confirm it appears in the Azure file share.
-2. Take an on-demand backup of that share and wait for the job to complete.
-3. Delete the file on the server and let the delete sync up.
-4. Restore the file from the recovery point, to its original place or to another folder. Single
-   files come back only from the **snapshot** tier; the vault-standard tier restores whole shares.
-5. Force change detection on the cloud endpoint (`Invoke-AzStorageSyncChangeDetection`), so the
-   restored file does not wait for the next 24-hour enumeration.
-6. Confirm the file is back **on the server** - the step that proves the whole loop.
-
-Commands: [codex/runbook-restore-file-share-and-share-soft-delete.md](codex/runbook-restore-file-share-and-share-soft-delete.md)
-and [docs/PLAYBOOK-azure-backup-for-azure-files.md](docs/PLAYBOOK-azure-backup-for-azure-files.md).
-
-### 7. Assess governance
-
-```powershell
-.\Invoke-AfsGovernanceAssessment.ps1 -Context .\deploy\deployment-context.json   # or -SubscriptionId <id> -TenantId <id>
-```
-
-It feeds the Azure Governance Visualizer the subscription and tenant from your build, first checks
-you can read the management group - without Reader there the report comes back nearly empty and
-looks like a broken tool - and writes to `governance\`.
-
-### 8. Advise, when there is nothing to assess
-
-Start at [advise/SESSION-GUIDE.md](advise/SESSION-GUIDE.md): a two-hour session that closes the
-decisions in [advise/REFERENCE-DESIGN.md](advise/REFERENCE-DESIGN.md), uses
-[advise/DESIGN-INTERVIEW.md](advise/DESIGN-INTERVIEW.md) in place of an export, and ends in
-[advise/BUILD-SEQUENCE.md](advise/BUILD-SEQUENCE.md) - day 1 to day 90, gated, covering the whole
-path a VMware estate takes into Azure.
-
-### 9. Remove it
-
-Do it in this order: Azure refuses to remove a cloud endpoint while a server endpoint still uses
-it, and the AD object and the DNS forwarders live outside the resource group.
-
-```powershell
-# 1. sync: server endpoints, cloud endpoints, sync groups, then unregister (-UninstallAgent also removes the agent)
-.\onprem\Install-AfsServerEndpoint.ps1 -Context .\deploy\deployment-context.json -FileServer fs01 -Remove
-# 2. the AD object and the DNS forwarders
-.\onprem\Join-AfsStorageAccountToAdDs.ps1 -Context .\deploy\deployment-context.json -Remove
-.\onprem\Set-AfsDnsForwarders.ps1 -Context .\deploy\deployment-context.json -DnsServer dc01,dc02 -Remove
-# 3. Azure, dry run first
-cd deploy
-.\Remove-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf
-.\Remove-AfsEnvironment.ps1 -Context .\deployment-context.json
-```
-
-Share data is never deleted by the on-premises scripts. The teardown inventories the resource
-group and refuses if it holds anything your configuration does not name (`-Force` when that is
-expected), disables backup protection first, and - where a policy keeps vault soft delete always
-on - removes everything else and prints the date the vault can be deleted. The Entra deployment
-identity also lives outside the group; the as-built names it and the command to remove it.
-
-## How to tell it works
-
-Each row is a question, the command that answers it, and the answer that means yes. Start at the
-top: a green kit on a machine that passes the requirements check rules out most of what can go
-wrong before you touch Azure.
-
-| Question | Run | It works when |
-|---|---|---|
-| Is this copy of the kit intact? | `.\tests\run-tests.ps1` | It ends `ALL GREEN (195 checks)`. It runs offline against a synthetic export and covers the rule catalogue, rule severities, private-traffic mode, zip input, every report tab, the menu wiring and a parse of the wizard |
-| Can this machine and account do the run? | menu option **8** | The summary reads `0 blocker(s)` and `everything the run needs is in place.` Anything it could not check is reported as unknown and counted - never as ok |
-| What exactly will be built? | `.\Deploy-AfsEnvironment.ps1 -InputFile .\inputs.json -ShowResolved` | Every name, address range and setting is printed, and nothing is contacted |
-| Will the build succeed? | `.\Deploy-AfsEnvironment.ps1 -Context .\deployment-context.json -WhatIf` | The preflight passes for real - CLI, sign-in, subscription, extension, storage name availability - and every step is listed without anything changing. A dry run neither registers providers nor fails on a missing one; menu option **8** checks them |
-| Did the build do what it says? | the `Verify with:` commands phase 2 prints, and `as-built\AS-BUILT-<prefix>-<stamp>.html` | Each verify command returns its object. The as-built is read from Azure after the build, not written from the plan, and its Verify tab gives the read-back command for every row. Regenerate it with `.\deploy\Export-AfsAsBuilt.ps1 -Context .\deploy\deployment-context.json` |
-| Do the private endpoints have DNS records? | `az network private-dns record-set a list -g <rg> -z privatelink.file.core.windows.net -o table`, and the same for `privatelink.afs.azure.net` | One A record for the storage account and four for the Storage Sync Service. A zone holding only its SOA means the endpoint resolves publicly |
-| Does the name resolve privately from your network? | from an on-premises client: `Resolve-DnsName <account>.file.core.windows.net` and `Test-NetConnection <account>.file.core.windows.net -Port 445` | A CNAME to `<account>.privatelink.file.core.windows.net`, a **private** address, and `TcpTestSucceeded : True`. Only then close the public paths |
-| Is the server syncing? | the `Microsoft-FileSync-Agent/Telemetry` event log on the server (also collected by `Get-AfsServerDiagnostics.ps1`) | Event **9102** (sync session complete) with `HResult` 0, and the server's files visible in the share. The portal's sync health lags by about 15 minutes, so read the server first. The agent's `Debug-StorageSyncServer -TestNetworkConnectivity` tests every endpoint - documented by Microsoft, not run in this kit's lab record |
-| Does identity-based access work? | `Debug-AzStorageAccountAuth -StorageAccountName <account> -ResourceGroupName <rg> -Verbose` (from AzFilesHybrid), and `az storage account show -g <rg> -n <account> --query azureFilesIdentityBasedAuthentication.directoryServiceOptions -o tsv` | Every check passes and the second command prints `AD`. Running the join again reports that it is already joined |
-| Are the shares protected? | `az backup item list --resource-group <rg> --vault-name <vault> --backup-management-type AzureStorage --workload-type AzureFileShare -o table` | Every share is listed as protected under the policy. `IRPending` is normal until the first backup runs |
-| Can you get a file back? | the restore test in [step 6](#6-protect-the-data-then-prove-a-restore) | The deleted file is back on the file server |
-| Is the governance report current? | menu option **6** | Files written by this run are listed as output; older files in `governance\` are named as leftovers with their date |
-| What went wrong in a failed run? | `logs\<run>.log` | The `[ERROR]` line carries the message, the script line that threw, and the stack |
-
-## Proven against live Azure
-
-Before publication, the 89 `az` commands and 48 PowerShell cmdlets in the codex (its 20 entries at
-the time) were resolved against the real CLI and modules, and 33 of 36 read-only checks passed
-against live resources. Since then the build and the on-premises steps have run for real, on
-2026-09-03 and 2026-09-04, in a lab subscription and an on-premises lab with a Windows Server 2022
-file server and Active Directory:
-
-- **The two-phase build, end to end** - identity, storage and two shares, both private endpoints
-  (the File Sync one with its four names), both private DNS zones with their A records, the
-  Storage Sync Service, the resolver, a geo-redundant vault with cross-region restore, the 60-day
-  policy and both shares protected. An on-demand backup completed; a second run skipped what
-  already existed.
-- **The agent and sync** - installed over PowerShell remoting, server registered, sync group and
-  both endpoints created, files synced up.
-- **The AD DS join** - the storage account joined the domain as a computer object, and
-  `Debug-AzStorageAccountAuth` passed its checks.
-- **The restore loop** - a folder restored item-level to another location in 78 seconds, and after
-  change detection it synced back down to the server.
-- **The requirements check** - 41 checks against that estate, including a missing OU the join would
-  have misreported as a permissions failure.
-- **The teardown** - against a vault whose soft delete a policy keeps always on: everything else
-  removed, and the retry date printed.
-
-Running it found defects that reading had not - a DNS zone-group check that passed on an empty
-answer so no A records were written, the Windows `az.cmd` wrapper breaking on any `)` in a query,
-a shared CLI profile retargeting a build in mid-run, `powershell -File` silently dropping
-`-Confirm:$false` - each fixed and recorded in [docs/VALIDATION.md](docs/VALIDATION.md).
-
-**Not claimed as proven live:** the DNS forwarder write (at the time of the lab runs the resolver
-was not reachable from on-premises, and the forwarder script refused to write, as designed); the
-lock-down; ExpressRoute routing, with no circuit in the lab; and the Azure Migrate and migrated-VM
-backup procedures, whose commands resolve but have not been run. Full record:
-[docs/PROOF-OF-WORK.md](docs/PROOF-OF-WORK.md). **Known defects** - the unreachable lock-down,
-provider registration under the deployment identity, the step counter, server bundles with zip
-input - are [#1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1); diagrams
-that still draw a forwarder on a `privatelink` zone are
-[#2](https://github.com/gusitde/azure-filesync-backup-assessment/issues/2).
-
-## When it goes wrong
-
-| You see | It means | Do this |
-|---|---|---|
-| `RequestDisallowedByAzure ... without authenticating through MFA` | The session signed in without MFA. Reads work, writes do not | `az logout`, then `az login` and complete MFA |
-| `AuthorizationFailed` creating a cloud endpoint | Contributor cannot create role assignments, and a cloud endpoint creates one | Owner, User Access Administrator or Azure File Sync Administrator on the storage account |
-| Preflight waits, then `resource providers did not finish registering in 10 minutes` | The deployment identity cannot register providers - that needs the subscription | Register them once as the administrator: `az provider register -n <namespace>` |
-| `-o was unexpected at this time.` | On Windows `az` is a batch file, and a `)` inside an argument - any `--query` with a function call - ends one of its blocks early | Query a plain list and filter in PowerShell. The kit calls the bundled Python directly to avoid it |
-| `usage error: --resource ID \| --resource NAME ...` | Git Bash rewrote a resource ID into a Windows path | Run from PowerShell, or `export MSYS_NO_PATHCONV=1` |
-| The private endpoint exists but the name resolves publicly | No A records were written | Run phase 2 again, then check with `az network private-dns record-set a list` |
-| Sync stops right after a network change | The public path was closed before the private endpoint resolved | Re-open it, prove resolution, close it again - [runbook](codex/runbook-file-sync-broken-after-network-lockdown.md) |
-| A run hangs with no output | It is waiting on a prompt no console can answer; `powershell -File` silently drops `-Confirm:$false` | Run from a real console, or use `powershell -Command "& '.\script.ps1' ... -Confirm:$false"` |
-
-More, with the reasoning: [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md#8-when-something-goes-wrong)
-and the *When it goes wrong* tab of [docs/HOW-TO-USE.html](docs/HOW-TO-USE.html).
-
-## Decisions that are expensive to reverse
-
-- **Vault storage redundancy and cross-region restore** are fixed once the first item is
-  protected; the build sets them before it protects anything. **Vault soft delete set to
-  always-on** cannot be switched off, and holds the vault until its retention runs out.
-- **Trusted Launch VMs need the Enhanced VM backup policy, and Enhanced cannot go back to
-  Standard.** Azure Migrate lands VMs as Trusted Launch by default, so decide it on purpose.
-- **Azure Migrate locks the target region and the cache storage account** once replication starts.
-  Choose the target resource group, network and subnet at replication time: a network interface
-  cannot move between virtual networks afterwards.
-- **Forwarding a public DNS zone** makes the resolver a dependency of every name under it - see
-  [codex/playbook-point-on-premises-dns-at-the-private-resolver.md](codex/playbook-point-on-premises-dns-at-the-private-resolver.md).
-
-The full list, with the reasons, is in [advise/REFERENCE-DESIGN.md](advise/REFERENCE-DESIGN.md).
-
-## Repository layout
-
-| Path | What it is |
-|---|---|
-| `start.ps1` | The guided front door - everything is reachable from here |
-| `Export-AzFileSyncEnvironment.ps1`, `Get-AfsServerDiagnostics.ps1`, `Assess-AzFileSyncExport.ps1` | Export, per-server bundle, assessor |
-| `Render-AfsAssessmentHtml.ps1`, `render/` | The HTML report, with one renderer per subject tab |
-| `Invoke-AfsGovernanceAssessment.ps1` | The governance wrapper |
-| `deploy/` | The four inputs, both phases, the teardown, the as-built generator, the requirements check and run logging |
-| `onprem/` | Agent and server endpoint, DNS forwarders, AD DS join |
-| `advise/`, `codex/` | The design path, and the blueprints, playbooks, runbooks and diagrams (`codex/import-to-luca.mjs` imports them into a Luca codex) |
-| `docs/` | The offline guide, getting started, the playbooks, rules, references, validation record, proof of work, as-built template and change log |
-| `fixtures/`, `tests/` | The synthetic export and the offline test suite |
-| Never committed | `deploy/deployment-identity.json` (the deployment identity's **secret**, if one was issued - move it to a secret store), `deploy/inputs.json`, `deploy/deployment-context.json`, `afs-export-*` and other `*.zip`, `assessment-latest/`, `as-built/`, `logs/`, `governance/` - they name real resources and tenants |
-
-## Accuracy and contributing
-
-On 2026-09-03 the codex library - its 20 entries at the time - was fact-checked against Microsoft's
-own documentation: 898 technical claims were extracted, an independent pass upheld 62 as errors,
-and all 62 were corrected. Today all 25 entries pass the codex validator with 0 errors, all 97
-diagrams render, and every reference URL was opened and checked. Re-verify anything that carries a
-version, a limit or a module number before quoting it more than a quarter from now. Method and
-limits: [docs/VALIDATION.md](docs/VALIDATION.md).
-
-If a command does not behave as written, or something you needed is not here, report it - neither
-needs write access. See [CONTRIBUTING.md](CONTRIBUTING.md) for the issue templates and the three
-house rules. Every change bumps the stamp in `deploy\AfsLog.ps1` and adds a row to
-[docs/VERSION-CONTROL.md](docs/VERSION-CONTROL.md). The scripts are ASCII-only, so Windows
-PowerShell 5.1 parses them the same way in every locale; most also carry a UTF-8 byte-order mark.
+The build leaves both public paths open, and you close them by hand once the private path resolves ([#1](https://github.com/gusitde/azure-filesync-backup-assessment/issues/1)).
+Some codex diagrams still draw a forwarder on a `privatelink` zone ([#2](https://github.com/gusitde/azure-filesync-backup-assessment/issues/2)).
+Everything else that behaves differently from what you might expect is in
+[Known behaviour and limitations](docs/USER-GUIDE.md#7-known-behaviour-and-limitations) ([#3](https://github.com/gusitde/azure-filesync-backup-assessment/issues/3)).
+To report a correction or a gap, open an issue - no write access needed; see [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -4,9 +4,10 @@ A complete walk-through: what to install, how to sign in, and how to run each sc
 for someone who has not seen this repository before. Every version and error message here came
 from actually running it, not from a specification.
 
-**If you would rather be led through it**, run `.\start.ps1` - *Luca AZ Consulting Helper*. It does
-the prerequisite checks in section 2, the sign-in in section 3, and then whichever of the
-flows below you pick, always with a dry run first.
+**For the complete, option-by-option guide, read [USER-GUIDE.md](USER-GUIDE.md).** If you would
+rather be led through it, run `.\start.ps1`: each option checks what it needs when you choose it,
+asks before every change in Azure or on your servers, and shows a dry run first for phase 2 of the
+build, the teardown and every on-premises step.
 
 ---
 

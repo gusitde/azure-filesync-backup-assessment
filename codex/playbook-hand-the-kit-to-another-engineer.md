@@ -4,16 +4,16 @@ doc_type: playbook
 kind: hand-the-kit-to-another-engineer
 category: ops
 title: Hand the deployment kit to another engineer without sitting next to them
-summary: The long-form guide the wizard opens - one self-contained page, a tab per task, the one-way doors called out - so someone who has never seen the kit can run it correctly on their own.
+summary: The offline guide the wizard opens and the user guide in docs/USER-GUIDE.md together let someone who has never seen the kit run it correctly on their own.
 when_to_use: Somebody else is about to run a build, a teardown, or the on-premises steps, and you will not be in the room.
 applies_to: [ops, devstation]
 tags: [documentation, onboarding, wizard, handover, offline, contoso]
 persona_run: eng-sysops
 ticket_kind: ops
 status: published
-version: 2
+version: 3
 execution: assisted
-last_verified: 2026-09-04T06:40 EST (UTC-4)
+last_verified: 2026-09-10T15:10 EST (UTC-4)
 artifacts: []
 supersedes: []
 ---
@@ -42,6 +42,12 @@ This entry covers the guide that closes that gap, and how to hand the kit over u
   path: docs/, codex/
   why: the guide orients and links; it does not restate the reference material, which would
        leave two copies to drift apart
+- primitive: docs/USER-GUIDE.md
+  path: docs/USER-GUIDE.md, linked from every row of the README menu table
+  why: the depth the one-page guide leaves out - every prompt with its default, the exact script
+       and arguments each option runs, the line that means it worked, the error table, and the
+       places the kit behaves differently from what you might expect - each checked against the
+       code, not against the other documents
 ```
 
 ## Procedure
@@ -66,9 +72,13 @@ This entry covers the guide that closes that gap, and how to hand the kit over u
 6. **The troubleshooting table is evidence, not documentation.** Every message in it came out of
    a real run against a real tenant. When a message is not in the table, that is worth a
    correction rather than a shrug - see `CONTRIBUTING.md`.
-7. **Keep it honest.** The guide names the 15 build steps, the 14 menu options and the 10 tabs.
-   Change the wizard and change the guide in the same commit, or the first thing a new engineer
-   learns from it is that it cannot be trusted.
+7. **Hand over the user guide with it.** `docs/USER-GUIDE.md` starts with *Your first hour*: install,
+   run the tests (on a fresh clone `python fixtures\make-fixture.py` first), assess the synthetic
+   estate, try options 1 and 8. Its section 7, *Known behaviour and limitations*, is the list to
+   read before a live run - for example, phase 1 has no dry run in the wizard.
+8. **Keep it honest.** The guides name the 15 build steps, the 14 menu options and the 10 tabs.
+   Change the wizard and change both guides in the same commit, or the first thing a new engineer
+   learns from them is that they cannot be trusted.
 
 ## Steps
 
@@ -87,6 +97,9 @@ steps:
   - name: hand it over
     run: copy docs\HOW-TO-USE.html <wherever the other engineer will read it>
     verify: it opens and renders on a machine with no access to this repository
+  - name: point them at the user guide
+    run: python fixtures\make-fixture.py; powershell -File tests/run-tests.ps1
+    verify: the receiving engineer's own clone ends ALL GREEN (195 checks), which is step 3 of Your first hour in docs/USER-GUIDE.md
 ```
 
 ## How a persona runs this (-> ticket)
@@ -127,6 +140,9 @@ steps:
 - path: docs/GETTING-STARTED.md
   anchor: "Dependencies"
   why: the reference the guide links to rather than restating
+- path: docs/USER-GUIDE.md
+  anchor: "## 7. Known behaviour and limitations"
+  why: what the kit does today where that differs from what the reader would expect, with a workaround and the issue for each
 ```
 
 The guide states no fact this repository has not already verified: the build step count comes
