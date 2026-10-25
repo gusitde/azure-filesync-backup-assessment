@@ -1,0 +1,95 @@
+{
+  "schema": "luca-kit/1",
+  "id": "azure-filesync-backup-assessment",
+  "name": "Azure File Sync + Azure Backup",
+  "category": "Storage and backup",
+  "runtime": "PowerShell 5.1",
+  "summary": "Assess, design, build, connect and prove Azure File Sync with Azure Backup over private endpoints, from one PowerShell menu (start.ps1). The assessment is read-only and runs offline against an export, with a read-back proof for everything the build creates.",
+  "license": null,
+  "entry": {
+    "shell": "powershell",
+    "requiresAdmin": false
+  },
+  "tools": [
+    {
+      "id": "start",
+      "label": "Wizard",
+      "command": ".\\start.ps1",
+      "description": "The 14-option menu: learn, check requirements, assess, build, connect servers, prove, remove."
+    },
+    {
+      "id": "tests",
+      "label": "Offline tests",
+      "command": ".\\tests\\run-tests.ps1",
+      "description": "Proves this copy of the kit is intact; no Azure account needed. Run python fixtures\\make-fixture.py first."
+    },
+    {
+      "id": "assess",
+      "label": "Assess an export",
+      "command": ".\\Assess-AzFileSyncExport.ps1",
+      "description": "Applies the assessment rules offline to an export and writes the HTML report; -ExportPath, -OutputPath."
+    },
+    {
+      "id": "export",
+      "label": "Export an environment",
+      "command": ".\\Export-AzFileSyncEnvironment.ps1",
+      "description": "Read-only export of File Sync, storage, Backup, private endpoints and DNS (Reader is enough)."
+    },
+    {
+      "id": "diagnostics",
+      "label": "Server diagnostics",
+      "command": ".\\Get-AfsServerDiagnostics.ps1",
+      "description": "Per-file-server bundle; run elevated on each file server."
+    },
+    {
+      "id": "governance",
+      "label": "Governance assessment",
+      "command": ".\\Invoke-AfsGovernanceAssessment.ps1",
+      "description": "Tenant policy and RBAC report through the Azure Governance Visualizer."
+    }
+  ],
+  "prerequisites": [
+    "Windows PowerShell 5.1 (powershell.exe), not Git Bash; Git and Python 3",
+    "Azure CLI for anything beyond the offline assessment",
+    "Reader on the estate for an export; build rights on the target subscription for a build",
+    "RSAT AD and DNS modules, installed once elevated, for the on-premises steps",
+    "A network path from on-premises into the new VNet (ExpressRoute or VPN) that you provide"
+  ],
+  "docs": [
+    {
+      "label": "README",
+      "path": "README.md"
+    },
+    {
+      "label": "User guide",
+      "path": "docs/USER-GUIDE.md"
+    },
+    {
+      "label": "Getting started",
+      "path": "docs/GETTING-STARTED.md"
+    },
+    {
+      "label": "Script reference",
+      "path": "docs/SCRIPT-REFERENCE.md"
+    },
+    {
+      "label": "How to use (offline page)",
+      "path": "docs/HOW-TO-USE.html"
+    },
+    {
+      "label": "Assessment playbook",
+      "path": "docs/PLAYBOOK-azure-file-sync-assessment.md"
+    },
+    {
+      "label": "Advise: session guide",
+      "path": "advise/SESSION-GUIDE.md"
+    },
+    {
+      "label": "Codex library",
+      "path": "codex/README.md"
+    }
+  ],
+  "claudePrompt": "Read README.md and docs/USER-GUIDE.md first. Help me run the offline tests and assess the synthetic estate, then assess my own export or plan a build with the advise guides, explaining every finding and every phase's dry run. Stop and ask before any step that re-images, wipes, reboots, deletes or changes a server or Azure resource.",
+  "documents": [],
+  "brands": {}
+}
